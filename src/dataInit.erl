@@ -31,7 +31,21 @@ start_distribution() ->
   Servers.
 
 first_step() ->
-  erlang:error(not_implemented).
+  spawn(fun() -> first_step(ets:new(names, [set, public, {read_concurrency, true}])) end).
+
+first_step(Table) ->
+  {ok, File} = file:open(?NAMES_FILENAME, [read]),
+  _headers = io:get_line(File, ""),
+  first_step(Table, File).
+
+first_step(Table, File) ->
+  case io:get_line(File, "") of
+    eof -> loop_names(Table);
+    Line ->
+      {ID, Name} = parseName(string:split(Line, "\t", all)),
+      ets:insert_new(Table, {ID, Name})
+  end,
+  first_step(Table, File).
 
 second_step(Servers) ->
   {ok, File} = file:open(?BASIC_FILENAME, [read]),
@@ -51,12 +65,17 @@ third_step(Servers, NamePID) ->
 third_step([], File, _) -> file:close(File);
 third_step(Servers, File, NamePID) ->
   ok = gen_server:cast({serverpid, hd(Servers)}, {namePID, NamePID}),
-  Res = sendLines(hd(Servers), File, false, step2),
-  case Res of
-    ok -> ignore;
-    Line -> ok = gen_server:cast({serverpid, tl(hd(Servers))}, {step2, Line})
-  end,
-  third_step(tl(Servers), File, NamePID).
+  case sendLines(hd(Servers), File, false, step2) of
+    ok -> third_step(tl(Servers), File, NamePID);
+    Line -> third_step(tl(Servers), File, NamePID, Line)
+  end.
+third_step(Servers, File, NamePID, Line) ->
+  ok = gen_server:cast({serverpid, hd(Servers)}, {namePID, NamePID}),
+  ok = gen_server:cast({serverpid, tl(hd(Servers))}, {step2, Line}),
+  case sendLines(hd(Servers), File, false, step2) of
+    ok -> third_step(tl(Servers), File, NamePID);
+    Line -> third_step(tl(Servers), File, NamePID, Line)
+  end.
 
 %% find_servers - check each server if alive. Returns a list of server nodes which are alive
 find_servers([], Servers) -> Servers;
@@ -86,7 +105,7 @@ sendLines(ServerNode, File, N, step1) ->
         true -> put(ServerNode, hd(string:split(Line, "\t")));
         false -> ignore
       end,
-      sendLines(ServerNode, File, N-1, step1)
+      sendLines(ServerNode, File, N - 1, step1)
   end;
 
 sendLines(ServerNode, File, CurrStop, step2) ->
@@ -103,3 +122,15 @@ sendLines(ServerNode, File, CurrStop, step2) ->
         Other -> sendLines(ServerNode, File, Other, step2)
       end
   end.
+
+loop_names(Table) ->
+  receive
+    {From, Name} ->
+      case ets:lookup(Table, Name) of
+        [] -> From ! not_found;
+        [Found] -> From ! Found
+      end
+  end.
+
+parseName(Person) ->
+  {list_to_atom(lists:nth(1, Person)), list_to_atom(lists:nth(2, Person))}.
