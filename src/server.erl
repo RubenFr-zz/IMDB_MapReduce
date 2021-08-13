@@ -31,7 +31,9 @@
 -spec(start_link() ->
   {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link() ->
-  gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+  {ok, PID} = gen_server:start_link({global, node()}, ?MODULE, [], []),
+  register(server, PID),
+  {ok, PID}.
 
 %%%===================================================================
 %%% gen_server callbacks - init
@@ -43,6 +45,7 @@ start_link() ->
   {ok, State :: #server_state{}} | {ok, State :: #server_state{}, timeout() | hibernate} |
   {stop, Reason :: term()} | ignore).
 init([]) ->
+  io:format("Server started.~n"),
   {ok, #server_state{imdb = ets:new(imdb, [set, public, {read_concurrency, true}])}}.
 
 %%%===================================================================
@@ -59,6 +62,11 @@ init([]) ->
   {noreply, NewState :: #server_state{}, timeout() | hibernate} |
   {stop, Reason :: term(), Reply :: term(), NewState :: #server_state{}} |
   {stop, Reason :: term(), NewState :: #server_state{}}).
+
+handle_call(test, {From, _Tag}, State = #server_state{}) ->
+  From ! received,
+  {reply, ok, State};
+
 handle_call(_Request, _From, State = #server_state{}) ->
   {reply, ok, State}.
 
@@ -74,20 +82,27 @@ handle_call(_Request, _From, State = #server_state{}) ->
   {stop, Reason :: term(), NewState :: #server_state{}}).
 
 handle_cast({step1, Line}, State = #server_state{}) ->
+  io:format("Received step1.~n"),
   Data = string:split(Line, "\t", all),
   Title = parseTitle(Data),
   ets:insert_new(State#server_state.imdb, {Title#title.id, Title}),
   {noreply, State};
 
 handle_cast({namePID, NamePID}, State = #server_state{}) ->
+  io:format("Received namePID.~n"),
   {noreply, State#server_state{namePid = NamePID}};
 
 handle_cast({step2, Line}, State = #server_state{}) ->
+  io:format("Received step2.~n"),
   Data = string:split(Line, "\t", all),
   {ID, NameID} = parsePrincipal(Data),
   Name = fetch_name(NameID),
   [Title = #title{}] = ets:lookup(State#server_state.imdb, ID),
   ets:update_element(State#server_state.imdb, ID, {2, [Name | Title#title.cast]}),
+  {noreply, State};
+
+handle_cast(test, State = #server_state{}) ->
+  io:format("Message received!~n"),
   {noreply, State};
 
 handle_cast(_Request, State = #server_state{}) ->
@@ -149,7 +164,7 @@ parsePrincipal(Principal) ->
   { list_to_atom(lists:nth(1, Principal)), list_to_atom(lists:nth(3, Principal)) }.
 
 fetch_name(NameID) ->
-  gen_server:call({server, whereis(server)}, {name, NameID}),
+  gen_server:call({master, 'master@ubuntu'}, {name, NameID}),
   receive
     not_available -> timer:sleep(100), fetch_name(NameID);
     Name -> Name

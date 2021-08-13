@@ -18,7 +18,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
   code_change/3]).
 
--define(SERVER, ?MODULE).
+-define(SERVER, master).
 
 -record(master_state, {servers, namePID}).
 
@@ -30,7 +30,9 @@
 -spec(start_link() ->
   {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link() ->
-  gen_server:start_link({global, ?SERVER}, ?MODULE, [], []).
+  {ok, PID} = gen_server:start_link({global, ?SERVER}, ?MODULE, [], []),
+  register(master, PID),
+  {ok, PID}.
 
 %%%===================================================================
 %%% gen_server callbacks - init
@@ -83,6 +85,12 @@ handle_call(_Request, _From, State = #master_state{}) ->
   {noreply, NewState :: #master_state{}} |
   {noreply, NewState :: #master_state{}, timeout() | hibernate} |
   {stop, Reason :: term(), NewState :: #master_state{}}).
+
+handle_cast(test, State = #master_state{}) ->
+  io:format("Test casting received!~n"),
+  dataInit:test_step(),
+  {noreply, State};
+
 handle_cast(_Request, State = #master_state{}) ->
   {noreply, State}.
 
@@ -92,6 +100,7 @@ handle_cast(_Request, State = #master_state{}) ->
   {noreply, NewState :: #master_state{}} |
   {noreply, NewState :: #master_state{}, timeout() | hibernate} |
   {stop, Reason :: term(), NewState :: #master_state{}}).
+
 handle_info(_Info, State = #master_state{}) ->
   {noreply, State}.
 

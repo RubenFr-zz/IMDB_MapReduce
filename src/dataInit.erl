@@ -11,12 +11,13 @@
 
 %% API
 -export([start_distribution/0]).
+-export([test_step/1]).
 
 %% CONSTANTS
 -define(BASIC_FILENAME, "Input Files/basic_short.tsv").
 -define(PRINCIPALS_FILENAME, "Input Files/principals_short.tsv").
--define(NAMES_FILENAME, "Input Files/names.tsv").
--define(SERVERS_FILENAME, "Input Files/names.tsv").
+-define(NAMES_FILENAME, "Input Files/names_short.tsv").
+-define(SERVERS_FILENAME, "Input Files/servers.txt").
 
 -define(NUM_OF_TITLES, 10).
 %%-define(NUM_OF_TITLES, 8163533).
@@ -24,11 +25,26 @@
 
 start_distribution() ->
   Servers = find_servers(read_file([?SERVERS_FILENAME]), []),
+  io:format("Found ~p server(s): ~p~n", [length(Servers), Servers]),
 
-  NamePID = first_step(),
-  second_step(Servers),
-  third_step(Servers, NamePID),
+  test_step(Servers),
+
+  % NamePID = first_step(),
+  % io:format("Name loading started...~n"),
+  % io:format("Second Step started...~n"),
+  % second_step(Servers),
+  % io:format("Second Step finished.~n"),
+  % io:format("Third Step started...~n"),
+  % third_step(Servers, NamePID),
+  % io:format("Third Step finished.~n"),
   Servers.
+
+test_step([]) -> ok;
+test_step([Server | Servers]) ->
+  gen_server:call({server, Server}, test),
+  receive
+    received -> io:format("Received response from server!~n")
+  end.
 
 first_step() ->
   spawn(fun() -> first_step(ets:new(names, [set, public, {read_concurrency, true}])) end).
@@ -40,7 +56,9 @@ first_step(Table) ->
 
 first_step(Table, File) ->
   case io:get_line(File, "") of
-    eof -> loop_names(Table);
+    eof ->
+      io:format("Finished Step one.~n"),
+      loop_names(Table);
     Line ->
       {ID, Name} = parseName(string:split(Line, "\t", all)),
       ets:insert_new(Table, {ID, Name})
@@ -133,4 +151,7 @@ loop_names(Table) ->
   end.
 
 parseName(Person) ->
-  {list_to_atom(lists:nth(1, Person)), list_to_atom(lists:nth(2, Person))}.
+  {
+    element(1,string:to_integer(string:sub_string(lists:nth(1, Person), 3))),
+    lists:nth(2, Person)
+  }.
