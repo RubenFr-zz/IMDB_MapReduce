@@ -11,43 +11,29 @@
 
 %% API
 -export([start_distribution/0]).
--export([test_step/1]).
 
 %% CONSTANTS
--define(BASIC_FILENAME, "Input Files/basic_short.tsv").
--define(PRINCIPALS_FILENAME, "Input Files/principals_short.tsv").
--define(NAMES_FILENAME, "Input Files/names_short.tsv").
--define(SERVERS_FILENAME, "Input Files/servers.txt").
-
--define(NUM_OF_TITLES, 10).
-%%-define(NUM_OF_TITLES, 8163533).
+-define(BASIC_FILENAME, "InputFiles/basic1000.tsv").
+-define(PRINCIPALS_FILENAME, "InputFiles/principals1000.tsv").
+-define(NAMES_FILENAME, "InputFiles/names1000.tsv").
+-define(SERVERS_FILENAME, "InputFiles/servers.txt").
 
 
 start_distribution() ->
   Servers = find_servers(read_file([?SERVERS_FILENAME]), []),
   io:format("Found ~p server(s): ~p~n", [length(Servers), Servers]),
 
-  test_step(Servers),
+  NamePID = first_step(),
+  io:format("First Step started...~n"),
+  io:format("Second Step started...~n"),
+  second_step(Servers),
+  io:format("Second Step finished.~n"),
+  io:format("Third Step started...~n"),
+  third_step(Servers),
+  io:format("Third Step finished.~n"),
+  {Servers, NamePID}.
 
-  % NamePID = first_step(),
-  % io:format("Name loading started...~n"),
-  % io:format("Second Step started...~n"),
-  % second_step(Servers),
-  % io:format("Second Step finished.~n"),
-  % io:format("Third Step started...~n"),
-  % third_step(Servers, NamePID),
-  % io:format("Third Step finished.~n"),
-  Servers.
-
-test_step([]) -> ok;
-test_step([Server | Servers]) ->
-  gen_server:call({server, Server}, test),
-  receive
-    received -> io:format("Received response from server!~n")
-  end.
-
-first_step() ->
-  spawn(fun() -> first_step(ets:new(names, [set, public, {read_concurrency, true}])) end).
+first_step() -> spawn(fun() -> first_step(ets:new(names, [set, public, {read_concurrency, true}])) end).
 
 first_step(Table) ->
   {ok, File} = file:open(?NAMES_FILENAME, [read]),
@@ -57,10 +43,12 @@ first_step(Table) ->
 first_step(Table, File) ->
   case io:get_line(File, "") of
     eof ->
-      io:format("Finished Step one.~n"),
+      io:format("First Step finished.~n"),
+      file:close(File),
       loop_names(Table);
     Line ->
       {ID, Name} = parseName(string:split(Line, "\t", all)),
+      % io:format("Added new name: ~p -> ~p~n", [ID, Name]),
       ets:insert_new(Table, {ID, Name})
   end,
   first_step(Table, File).
@@ -68,32 +56,14 @@ first_step(Table, File) ->
 second_step(Servers) ->
   {ok, File} = file:open(?BASIC_FILENAME, [read]),
   _headers = io:get_line(File, ""),
-  second_step(Servers, File, ?NUM_OF_TITLES div length(Servers)).
+  ok = sendLines(Servers, File, step1),
+  file:close(File).
 
-second_step([], File, _) -> file:close(File);
-second_step(Servers, File, LinePerServer) ->
-  ok = sendLines(hd(Servers), File, LinePerServer, step1),
-  second_step(tl(Servers), File, LinePerServer).
-
-third_step(Servers, NamePID) ->
+third_step(Servers) ->
   {ok, File} = file:open(?PRINCIPALS_FILENAME, [read]),
-  _headers = io:get_line(File),
-  third_step(Servers, File, NamePID).
-
-third_step([], File, _) -> file:close(File);
-third_step(Servers, File, NamePID) ->
-  ok = gen_server:cast({serverpid, hd(Servers)}, {namePID, NamePID}),
-  case sendLines(hd(Servers), File, false, step2) of
-    ok -> third_step(tl(Servers), File, NamePID);
-    Line -> third_step(tl(Servers), File, NamePID, Line)
-  end.
-third_step(Servers, File, NamePID, Line) ->
-  ok = gen_server:cast({serverpid, hd(Servers)}, {namePID, NamePID}),
-  ok = gen_server:cast({serverpid, tl(hd(Servers))}, {step2, Line}),
-  case sendLines(hd(Servers), File, false, step2) of
-    ok -> third_step(tl(Servers), File, NamePID);
-    Line -> third_step(tl(Servers), File, NamePID, Line)
-  end.
+  _headers = io:get_line(File, ""),
+  ok = sendLines(Servers, File, step2),
+  file:close(File).
 
 %% find_servers - check each server if alive. Returns a list of server nodes which are alive
 find_servers([], Servers) -> Servers;
@@ -113,45 +83,34 @@ read_file(FileName) ->
     error: _Error -> {os:system_time(), error, "Cannot read the file"}
   end.
 
-sendLines(_, _, 0, _) -> ok;
-sendLines(ServerNode, File, N, step1) ->
+sendLines(Servers, File, Step) ->
   case io:get_line(File, "") of
     eof -> ok;
     Line ->
-      ok = gen_server:cast({serverpid, ServerNode}, {step1, Line}),
-      case N =:= 1 of
-        true -> put(ServerNode, hd(string:split(Line, "\t")));
-        false -> ignore
-      end,
-      sendLines(ServerNode, File, N - 1, step1)
-  end;
-
-sendLines(ServerNode, File, CurrStop, step2) ->
-  case io:get_line(File, "") of
-    eof -> ok;
-    Line ->
-      ok = gen_server:cast({serverpid, ServerNode}, {step2, Line}),
-      case get(ServerNode) =:= hd(string:split(Line, "\t")) of
-        true -> Stop = true;
-        false -> Stop = false
-      end,
-      case Stop of
-        false when CurrStop =:= true -> Line;
-        Other -> sendLines(ServerNode, File, Other, step2)
-      end
+      Key = hd(string:split(Line, "\t")),
+      ok = gen_server:cast({server, distributeTo(Key, Servers)}, {Step, Line}),
+      sendLines(Servers, File, Step)
   end.
 
 loop_names(Table) ->
   receive
-    {From, Name} ->
-      case ets:lookup(Table, Name) of
-        [] -> From ! not_found;
-        [Found] -> From ! Found
-      end
+    {From, Name} -> spawn(fun() -> fetch_name(From, Name, Table) end)
+  end,
+  loop_names(Table).
+
+fetch_name(From, Name, Table) ->
+  NameId = element(1, string:to_integer(string:sub_string(Name, 3))),
+  case ets:lookup(Table, NameId) of
+    [] -> From ! not_found;
+    [{_, Found}] -> From ! Found
   end.
 
 parseName(Person) ->
   {
-    element(1,string:to_integer(string:sub_string(lists:nth(1, Person), 3))),
+    element(1, string:to_integer(string:sub_string(lists:nth(1, Person), 3))),
     lists:nth(2, Person)
   }.
+
+distributeTo(Key, Servers) ->
+  Index = erlang:phash2(Key, length(Servers)),
+  lists:nth(Index + 1, Servers).
