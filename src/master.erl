@@ -78,6 +78,11 @@ handle_call({request, Request = #request{}}, From, State = #master_state{}) ->
   spawn(fun() -> process_request(Request, From, State#master_state.servers) end),
   {noreply, State};
 
+handle_call({request, Name, Type, Level}, From, State = #master_state{}) ->
+  Request = #request{name = Name, type = Type, level = Level},
+  spawn(fun() -> process_request(Request, From, State#master_state.servers) end),
+  {noreply, State};
+
 handle_call(request, From, State = #master_state{}) ->
   Request = #request{name = "Carmencita", type = title, level = 3},
   spawn(fun() -> process_request(Request, From, State#master_state.servers) end),
@@ -105,8 +110,21 @@ handle_cast(start, State = #master_state{}) ->
     [length(Servers), round(timer:now_diff(os:timestamp(), Start) / 1000)]),
   {noreply, State#master_state{servers = Servers, namePID = NamePID}};
 
+handle_cast({distribute, Node, FileName}, State = #master_state{}) ->
+  Reply = pmap:map(
+    fun(S) -> 
+      {ok, Bin} = file:read_file(FileName),
+      ok = rpc:call(S, file, write_file, [FileName, Bin]) end,
+    State#master_state.servers -- [Node]),
+  io:format("Distributed data from ~p to other servers.~n", [Node]),
+  {noreply, State};
+
 handle_cast(_Request, State = #master_state{}) ->
   {noreply, State}.
+
+%%%===================================================================
+%%% gen_server callbacks - handle_info
+%%%===================================================================
 
 %% @private
 %% @doc Handling all non call/cast messages
