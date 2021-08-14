@@ -92,20 +92,26 @@ handle_cast({step1, Line}, State = #server_state{}) ->
 
 handle_cast({step2, Line}, State = #server_state{}) ->
   Data = string:split(Line, "\t", all),
-  {ID, NameID} = parsePrincipal(Data),
-  case fetch_name(NameID) of
-    not_found -> pass;
-    Name -> 
-      case ets:lookup(State#server_state.imdb, ID) of
-        [] -> io:format("ID = ~p NOT FOUND!", [ID]);
-        [{_, Title = #title{}}] -> 
-          ets:insert(State#server_state.imdb, {ID, Title#title{cast = [Name | Title#title.cast]}})
-      end
+  {ID, NameID, Role} = parsePrincipal(Data),
+  if 
+    Role =:= "actor" orelse Role =:= "actress" ->  
+      case fetch_name(NameID) of
+        not_found -> pass;
+        Name -> 
+          case ets:lookup(State#server_state.imdb, ID) of
+            [] -> io:format("ID = ~p NOT FOUND!", [ID]);
+            [{_, Title = #title{}}] -> 
+              ets:insert(State#server_state.imdb, {ID, Title#title{cast = [Name | Title#title.cast]}})
+          end
+      end;
+    true -> ok
   end,
   {noreply, State};
 
 handle_cast(stop_init, State = #server_state{}) ->
   FileName = "table_" ++ hd(string:split(atom_to_list(node()), "@")),
+
+  delete_unecessary(State#server_state.imdb),
   
   % Save the table in two forms
   print_to_file(State#server_state.imdb, FileName ++ [".txt"]),
@@ -181,7 +187,8 @@ parseTitle(Title) ->
 parsePrincipal(Principal) ->
   { 
     element(1, string:to_integer(string:sub_string(lists:nth(1, Principal), 3))), 
-    lists:nth(3, Principal)
+    lists:nth(3, Principal),
+    lists:nth(4, Principal)
   }.
 
 fetch_name(NameID) ->
@@ -252,3 +259,15 @@ print_to_file(FileName, TableRef, Key) ->
   Title = ets:lookup_element(TableRef, Key, 2),
   ok = file:write_file(FileName, io_lib:format("~p\t~s\t~s\t~s\t~s~n", [Title#title.id, Title#title.title, Title#title.type, Title#title.genres, string:join(Title#title.cast, ",")]), [write, append]),
   print_to_file(FileName, TableRef, ets:next(TableRef, Key)).
+
+delete_unecessary(TableRef) -> delete_unecessary(TableRef, ets:first(TableRef)).
+delete_unecessary(_, '$end_of_table') -> ok;
+delete_unecessary(TableRef, Key) -> 
+  Title = ets:lookup_element(TableRef, Key, 2),
+  case Title#title.cast of
+    undefined -> ets:delete(TableRef, Key);
+    NotList when not is_list(NotList) -> ets:delete(TableRef, Key);
+    [] -> ets:delete(TableRef, Key);
+    _ -> ok
+  end,
+  delete_unecessary(TableRef, ets:next(TableRef, Key)).
