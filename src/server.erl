@@ -19,7 +19,7 @@
   code_change/3]).
 
 -define(SERVER, ?MODULE).
--define(MASTER_NODE, 'master@007-lnx-c1-n').
+-define(MASTER_NODE, 'master@132.72.104.125').
 
 -record(server_state, {imdb, namePid}).
 -record(title, {id, title, type, genres, cast}).
@@ -88,7 +88,6 @@ handle_cast({step1, Line}, State = #server_state{}) ->
   Data = string:split(Line, "\t", all),
   Title = parseTitle(Data),
   ets:insert_new(State#server_state.imdb, {Title#title.id, Title}),
-  % io:format("New Element inserted: ~p\tNew Size = ~p~n", [Title#title.title, ets:info(State#server_state.imdb, size)]),
   {noreply, State};
 
 handle_cast({step2, Line}, State = #server_state{}) ->
@@ -182,7 +181,6 @@ process_request(Request = #request{}, From, TableRef) ->
     title -> Reply = title_request(Request, TableRef);
     _other -> Reply = badarg
   end,
-  io:format("Level ~p of ~p: ~p~n", [Request#request.level, Request#request.name, Reply]),
   gen_server:reply(From, Reply).
 
 cast_request(Request = #request{}, TableRef) ->
@@ -197,9 +195,12 @@ title_request(Request = #request{}, TableRef) ->
 cast_request(Name, Set, _, '$end_of_table') -> sets:to_list(sets:del_element(Name, Set));
 cast_request(Name, Set, TableRef, Key) ->
   Title = ets:lookup_element(TableRef, Key, 2),
-  case lists:member(Title#title.cast, Name) of
+  % io:format("Looking for: ~p\tCast: ~p~n", [Name, Title#title.cast]),
+  case lists:member(Name,Title#title.cast) of
     false -> cast_request(Name, Set, TableRef, ets:next(TableRef, Key));
-    true ->  cast_request(Name, sets:union(Set, sets:from_list(Title#title.cast)), TableRef, ets:next(TableRef, Key))
+    true ->  
+      io:format("Looking for: ~p\tFound: ~p~n", [Name, Title#title.cast]),
+      cast_request(Name, sets:union(Set, sets:from_list(Title#title.cast)), TableRef, ets:next(TableRef, Key))
   end.
 
 title_request(Name, _, Set, _, '$end_of_table') -> sets:to_list(sets:del_element(Name, Set));
