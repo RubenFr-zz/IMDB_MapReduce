@@ -49,7 +49,7 @@ start_link() ->
 
 init([]) ->
   io:format("Server started.~n"),
-  {ok, #server_state{imdb = ets:new(imdb, [set, public, {read_concurrency, true}])}}.
+  {ok, #server_state{imdb = ets:new(imdb, [ordered_set, public, {read_concurrency, true}])}}.
 
 %%%===================================================================
 %%% gen_server callbacks - handle_call
@@ -93,24 +93,32 @@ handle_cast({step1, Line}, State = #server_state{}) ->
 handle_cast({step2, Line}, State = #server_state{}) ->
   Data = string:split(Line, "\t", all),
   {ID, NameID} = parsePrincipal(Data),
-  Name = fetch_name(NameID),
-  case ets:lookup(State#server_state.imdb, ID) of
-    [] -> io:format("ID = ~p NOT FOUND!", [ID]);
-    [{_, Title = #title{}}] -> 
-      ets:insert(State#server_state.imdb, {ID, Title#title{cast = [Name | Title#title.cast]}})
+  case fetch_name(NameID) of
+    not_found -> pass;
+    Name -> 
+      case ets:lookup(State#server_state.imdb, ID) of
+        [] -> io:format("ID = ~p NOT FOUND!", [ID]);
+        [{_, Title = #title{}}] -> 
+          ets:insert(State#server_state.imdb, {ID, Title#title{cast = [Name | Title#title.cast]}})
+      end
   end,
   {noreply, State};
 
 handle_cast(stop_init, State = #server_state{}) ->
   FileName = "table_" ++ hd(string:split(atom_to_list(node()), "@")),
+  
+  % Save the table in two forms
+  print_to_file(State#server_state.imdb, FileName ++ [".txt"]),
   ets:tab2file(State#server_state.imdb, FileName),
-  print_to_file(State#server_state.imdb, FileName ++ [".tsv"]),
-  % ets:delete(State#server_state.imdb),
 
-  {ok, Bin} = file:read_file(FileName ++ [".tsv"]),
-  rpc:call(?MASTER_NODE, file, write_file, [FileName ++ [".tsv"], Bin]).
+  %% Send a copy of the table to the master to distribute it to other severs for backup
+  {ok, Bin} = file:read_file(FileName), % Send tab2file
+  % {ok, Bin} = file:read_file(FileName ++ [".tsv"]), % Send text file
+  Reply = rpc:call(?MASTER_NODE, file, write_file, [FileName, Bin]),
+  gen_server:cast({master, ?MASTER_NODE}, {distribute, node(), FileName}),
+  io:format("~nTable sent to master: ~p~n", [Reply]),
 
-  io:format("Table available at ~p~n", [FileName ++ [".tsv"]]),
+  io:format("Table available at ~s~n~n", [FileName ++ [".txt"]]),
   {noreply, State};
 
 handle_cast(_Request, State = #server_state{}) ->
@@ -166,7 +174,7 @@ parseTitle(Title) ->
     id = element(1, string:to_integer(string:sub_string(lists:nth(1, Title), 3))),
     title = lists:nth(4, Title),
     type = lists:nth(2, Title),
-    genres = lists:nth(9, Title),
+    genres = string:trim(lists:nth(9, Title)),
     cast = []
   }.
 
@@ -231,12 +239,16 @@ find_cast(Name, TableRef, Key) ->
               sets:new(), Title#title.cast)
   end.
 
-print_to_file(TableRef, FileName) ->
-  File = file:open(FileName, [read]),
-  print_to_file(File, TableRef, ets:first(TableRef)).
+print_to_file(TableRef, FileName) -> 
+  try
+    file:delete(FileName)
+  catch
+    error: _Error -> {os:system_time(), error, io_lib:format("File ~p doesn't exist", [FileName])}
+  end,
+  print_to_file(FileName, TableRef, ets:first(TableRef)).
 
-print_to_file(File, _, '$end_of_table') -> ok = file:close(File);
-print_to_file(File, TableRef, Key) ->
+print_to_file(_, _, '$end_of_table') -> ok;
+print_to_file(FileName, TableRef, Key) ->
   Title = ets:lookup_element(TableRef, Key, 2),
-  file:write(File, io_lib:format("~p\t~p\t~p\t~p\t~p~n", [Title#title.id, Title#title.title, Title#title.type, Title#title.genres, Title#title.cast])),
-  print_to_file(File, TableRef, ets:next(TableRef, Key)).
+  ok = file:write_file(FileName, io_lib:format("~p\t~s\t~s\t~s\t~s~n", [Title#title.id, Title#title.title, Title#title.type, Title#title.genres, string:join(Title#title.cast, ",")]), [write, append]),
+  print_to_file(FileName, TableRef, ets:next(TableRef, Key)).
