@@ -104,14 +104,20 @@ handle_cast({step2, Line}, State = #server_state{}) ->
 handle_cast(stop_init, State = #server_state{}) ->
   FileName = "table_" ++ hd(string:split(atom_to_list(node()), "@")),
   ets:tab2file(State#server_state.imdb, FileName),
-  io:format("Table available at ~p~n", [FileName]),
+  print_to_file(State#server_state.imdb, FileName ++ [".tsv"]),
+  % ets:delete(State#server_state.imdb),
+
+  {ok, Bin} = file:read_file(FileName ++ [".tsv"]),
+  rpc:call(?MASTER_NODE, file, write_file, [FileName ++ [".tsv"], Bin]).
+
+  io:format("Table available at ~p~n", [FileName ++ [".tsv"]]),
   {noreply, State};
 
 handle_cast(_Request, State = #server_state{}) ->
   {noreply, State}.
 
 %%%===================================================================
-%%% gen_server callbacks - init
+%%% gen_server callbacks - handle_info
 %%%===================================================================
 
 %% @private
@@ -125,7 +131,7 @@ handle_info(_Info, State = #server_state{}) ->
   {noreply, State}.
 
 %%%===================================================================
-%%% gen_server callbacks - init
+%%% gen_server callbacks - terminate
 %%%===================================================================
 
 %% @private
@@ -140,7 +146,7 @@ terminate(_Reason, _State = #server_state{}) ->
   ok.
 
 %%%===================================================================
-%%% gen_server callbacks - init
+%%% gen_server callbacks - code_change
 %%%===================================================================
 
 %% @private
@@ -224,3 +230,13 @@ find_cast(Name, TableRef, Key) ->
               fun(X, S) -> sets:add_element(X, S) end, 
               sets:new(), Title#title.cast)
   end.
+
+print_to_file(TableRef, FileName) ->
+  File = file:open(FileName, [read]),
+  print_to_file(File, TableRef, ets:first(TableRef)).
+
+print_to_file(File, _, '$end_of_table') -> ok = file:close(File);
+print_to_file(File, TableRef, Key) ->
+  Title = ets:lookup_element(TableRef, Key, 2),
+  file:write(File, io_lib:format("~p\t~p\t~p\t~p\t~p~n", [Title#title.id, Title#title.title, Title#title.type, Title#title.genres, Title#title.cast])),
+  print_to_file(File, TableRef, ets:next(TableRef, Key)).
