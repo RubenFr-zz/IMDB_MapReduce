@@ -10,7 +10,7 @@
 -author("Ruben").
 
 %% API
--export([start_distribution/0]).
+-export([start_distribution/0, distribute/1, redistribute/2, servers/0]).
 
 %% CONSTANTS
 -define(BASIC_FILENAME, "InputFiles/basic1000.tsv").
@@ -20,20 +20,37 @@
 
 
 start_distribution() ->
-  Servers = find_servers(read_file([?SERVERS_FILENAME]), []),
+  Servers = find_servers(read_file(?SERVERS_FILENAME), []),
   io:format("Found ~p server(s): ~p~n", [length(Servers), Servers]),
 
-  NamePID = first_step(),
   io:format("First Step started...~n"),
+  NamePID = first_step(),
+
+  distribute(Servers),
+  {Servers, NamePID}.
+
+
+distribute(Servers) ->
   io:format("Second Step started...~n"),
   second_step(Servers),
   io:format("Second Step finished.~n"),
+
   io:format("Third Step started...~n"),
   third_step(Servers),
-  io:format("Third Step finished.~n"),
-  {Servers, NamePID}.
+  io:format("Third Step finished.~n").
 
-first_step() -> spawn(fun() -> first_step(ets:new(names, [set, public, {read_concurrency, true}])) end).
+
+redistribute([], _) -> ok;
+redistribute(Servers, Down) -> 
+  Choosen = distributeTo(Down, Servers),
+  case gen_server:call({server, Choosen}, {handle_new_data, Down}) of
+    ack -> ok;
+    {error, _} -> redistribute(Servers -- [distributeTo(Down, Servers)], Down)
+  end.
+
+
+% First Step: Load Names file. Return PID of the running process with the data
+first_step() -> spawn(fun() -> first_step(ets:new(names, [ordered_set, public, {read_concurrency, true}])) end).
 
 first_step(Table) ->
   {ok, File} = file:open(?NAMES_FILENAME, [read]),
@@ -48,22 +65,25 @@ first_step(Table, File) ->
       loop_names(Table);
     Line ->
       {ID, Name} = parseName(string:split(Line, "\t", all)),
-      % io:format("Added new name: ~p -> ~p~n", [ID, Name]),
       ets:insert_new(Table, {ID, Name})
   end,
   first_step(Table, File).
 
+second_step([]) -> ok;
 second_step(Servers) ->
   {ok, File} = file:open(?BASIC_FILENAME, [read]),
   _headers = io:get_line(File, ""),
   ok = sendLines(Servers, File, step1),
   file:close(File).
 
+third_step([]) -> ok;
 third_step(Servers) ->
   {ok, File} = file:open(?PRINCIPALS_FILENAME, [read]),
   _headers = io:get_line(File, ""),
   ok = sendLines(Servers, File, step2),
   file:close(File).
+
+servers() -> lists:map(fun(X) -> list_to_atom(X) end, read_file(?SERVERS_FILENAME)).
 
 %% find_servers - check each server if alive. Returns a list of server nodes which are alive
 find_servers([], Servers) -> Servers;
@@ -94,12 +114,12 @@ sendLines(Servers, File, Step) ->
 
 loop_names(Table) ->
   receive
-    {From, Name} -> spawn(fun() -> fetch_name(From, Name, Table) end)
+    {From, ID} -> spawn(fun() -> fetch_name(From, ID, Table) end)
   end,
   loop_names(Table).
 
-fetch_name(From, Name, Table) ->
-  NameId = element(1, string:to_integer(string:sub_string(Name, 3))),
+fetch_name(From, ID, Table) ->
+  NameId = element(1, string:to_integer(string:sub_string(ID, 3))),
   case ets:lookup(Table, NameId) of
     [] -> From ! not_found;
     [{_, Found}] -> From ! Found
