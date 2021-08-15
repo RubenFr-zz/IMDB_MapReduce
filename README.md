@@ -1,83 +1,8 @@
 # Final Project
 
-## Tools that can be used
-- Yaws
-- Cowboys
-- erlport (Python)
-- Mnesia
-- wxLab  
-
-## Data Set
-
-```text
-tt0000009,Miss Jerry,Miss Jerry,1894,1894-10-09,Romance,45,USA,None,Alexander Black,Alexander Black,Alexander Black Photoplays,"Blanche Bayliss, William Courtenay, Chauncey Depew",The adventures of a female reporter in the 1890s.,5.9,154,,,,,1,2
-```
-
-|        Key        |                            Value                      | 
-| :---------------: | :---------------------------------------------------: | 
-|id| tt0000009 |
-|title| Miss Jerry  |
-original title | Miss Jerry  |
-year | 1894  |
-date published | 1894-10-09  |
-genre | Romance  |
-duration | 45  |
-country | USA  |
-language | None  |
-director | Alexander Black  |
-writer | Alexander Black  |
-production company | Alexander Black Photoplays  |
-actors | Blanche Bayliss, William Courtenay, Chauncey Depew|
-description | The adventures of a female reporter in the 1890s.   |
-avg vote | 5.9  |
-votes | 154  |
-reviews from users | 1  |
-reviews from critics | 2|
-
-## Map Reduce
-The goal of the map reduce step will be to find the first link between all movies and actors.
-
-### Mapper
-#### input:
-
-__id__: tt0000009  
-__title__: Miss Jerry  
-__original title__: Miss Jerry  
-__year__: 1894  
-__date published__: 1894-10-09  
-__genre__: Romance  
-__duration__: 45  
-__country__: USA  
-__language__: None  
-__director__: Alexander Black  
-__writer__: Alexander Black  
-__production company__: Alexander Black Photoplays  
-__actors__: Blanche Bayliss, William Courtenay, Chauncey Depew  
-__description__: The adventures of a female reporter in the 1890s.   
-__avg vote__: 5.9  
-__votes__: 154  
-__reviews from users__: 1  
-__reviews from critics__: 2
-
-#### output (sent to reducers):
-|       Key         |                         Value                         | 
-| :---------------: | :---------------------------------------------------: | 
-|Miss Jerry         | Blanche Bayliss, William Courtenay, Chauncey Depew    | 
-|Blanche Bayliss    | Chauncey Depew, William Courtenay                     |
-|William Courtenay  | Blanche Bayliss, Chauncey Depew                       |
-|Chauncey Depew     | Blanche Bayliss, William Courtenay                    |
-
-### Reducer
-#### input: 
-K= Movie or Actor      V= List of actors
-
-#### output:
-Write to a file with the name: Key all the actors
-
-
 ## Input
 
-#### basics.tsv
+#### basics.tsv 
     - tconst (string) - alphanumeric unique identifier of the title  
     - titleType (string) – the type/format of the title (e.g. movie, short, tvseries, tvepisode, video, etc)
     - primaryTitle (string) – the more popular title / the title used by the filmmakers on promotional materials at the point of release  
@@ -85,7 +10,10 @@ Write to a file with the name: Key all the actors
     - isAdult (boolean) - 0: non-adult title; 1: adult title  
     - startYear (YYYY) – represents the release year of a title. In the case of TV Series, it is the series start year  
     - endYear (YYYY) – TV Series end year. ‘\N’ for all other title types  
-    - runtimeMinutes – primary runtime of the title, in minutes  
+    - runtimeMinutes – primary runtime of the title, in minutes
+
+> __8.163.533 films/tv shows/shorts__
+
 #### principals.tsv  
     - tconst (string) - alphanumeric unique identifier of the title  
     - ordering (integer) – a number to uniquely identify rows for a given titleId  
@@ -117,9 +45,3 @@ The four computers will receive a quarter of the file.
 The first step will be to remove unused information such as: originalTitle, isAdult, startYear, endYear, runtimeMinutes
 and to keep: **tconst, titleType, primaryTitle, genres**
 
-#### principals.tsv
-In this file we have the list of the crew/cast for each title. We'll use this to update the record we got in the first step
-
-#### names.tsv
-Finaly this file contains information on each crew/cast member. We will use that file to update the nconst gotten in the previous step.
-Because every computer will need these information, the main computer will deal with it and the slaves will send request for cast name.
