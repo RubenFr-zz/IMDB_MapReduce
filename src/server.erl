@@ -1,6 +1,6 @@
 %%%-------------------------------------------------------------------
 %%% @author Ruben
-%%% @copyright (C) 2021, <COMPANY>
+%%% @copyright (C) 2021, BGU
 %%% @doc
 %%%
 %%% @end
@@ -17,6 +17,8 @@
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
   code_change/3]).
+
+-import(mapreduce, [mapreduce/3]).
 
 -define(SERVER, ?MODULE).
 -define(MASTER_NODE, 'master@132.72.104.125').
@@ -203,49 +205,59 @@ fetch_name(NameID) ->
 
 
 process_request(Request = #request{}, From, TableRef) ->
-  io:format("Received a new Request: Name = ~p\tType = ~p~n", [Request#request.name, Request#request.type]),
-  % {ok, TableRef} = ets:file2tab(TableName),
+  ID = erlang:unique_integer([positive]),
+  io:format("Received a new Request (~p): Name = ~p\tType = ~p~n", [ID, Request#request.name, Request#request.type]),
+  
+  Start = os:timestamp(),
   case Request#request.type of
     cast -> Reply = cast_request(Request, TableRef);
     title -> Reply = title_request(Request, TableRef);
     _other -> Reply = badarg
   end,
+  io:format("Processing the request (~p) took ~p ms.~n", [ID, round(timer:now_diff(os:timestamp(), Start) / 1000)]),
+  
   gen_server:reply(From, Reply).
 
 cast_request(Request = #request{}, TableRef) ->
-  cast_request(Request#request.name, sets:new(), TableRef, ets:first(TableRef)).
+  Name = Request#request.name,
+  MapFun = fun({_ID, Title = #title{}}) -> {Name, Title#title.cast} end,
+  RedFun = fun({Actor, Actors}) -> 
+    case lists:member(Actor, Actors) of
+      false -> false;
+      true ->  Actors
+    end
+  end,
+  {List, Acc} = mapreduce(TableRef, MapFun, RedFun),
+  io:format("Map Reduce output: ~p with ~p processes~n", [List, Acc]),
+  Set = sets:from_list(List),
+  sets:to_list(sets:del_element(Name, Set)).
 
 title_request(Request = #request{}, TableRef) ->
+  Name = Request#request.name,
   case find_cast(Request#request.name, TableRef) of
-    notfound -> notfound;
-    Cast -> title_request(Request#request.name, Cast, sets:new(), TableRef, ets:first(TableRef))
-  end.
+    [] -> 
+      io:format("Map Reduce output: ~p with ~p processes~n", [[], 1]),
+      [];
+    Cast ->
+      MapFun = fun({_ID, Title = #title{}}) -> {Cast, Title#title.title, Title#title.cast} end,
+      RedFun = fun({MovieCast, Title, Actors}) -> 
+        case lists:foldr(fun(X, Acc) -> Acc or sets:is_element(X, MovieCast) end, false, Actors) of
+          false -> false;
+          true ->  [Title]
+        end
+      end,
 
-cast_request(Name, Set, _, '$end_of_table') -> sets:to_list(sets:del_element(Name, Set));
-cast_request(Name, Set, TableRef, Key) ->
-  Title = ets:lookup_element(TableRef, Key, 2),
-  % io:format("Looking for: ~p\tCast: ~p~n", [Name, Title#title.cast]),
-  case lists:member(Name,Title#title.cast) of
-    false -> cast_request(Name, Set, TableRef, ets:next(TableRef, Key));
-    true ->  
-      io:format("Looking for: ~p\tFound: ~p~n", [Name, Title#title.cast]),
-      cast_request(Name, sets:union(Set, sets:from_list(Title#title.cast)), TableRef, ets:next(TableRef, Key))
-  end.
-
-
-title_request(Name, _, Set, _, '$end_of_table') -> sets:to_list(sets:del_element(Name, Set));
-title_request(Name, Cast, Set, TableRef, Key) ->
-  Title = ets:lookup_element(TableRef, Key, 2),
-  case lists:foldr(fun(X, Acc) -> Acc or sets:is_element(X, Cast) end, false, Title#title.cast) of
-    false -> title_request(Name, Cast, Set, TableRef, ets:next(TableRef, Key));
-    true ->  title_request(Name, Cast, sets:add_element(Title#title.title, Set), TableRef, ets:next(TableRef, Key))
+      {List, Acc} = mapreduce(TableRef, MapFun, RedFun),
+      io:format("Map Reduce output: ~p with ~p processes~n", [List, Acc]),
+      Set = sets:from_list(List),
+      sets:to_list(sets:del_element(Name, Set))
   end.
 
 
 find_cast(Title, TableRef) ->
   find_cast(Title, TableRef, ets:first(TableRef)).
 
-find_cast(_, _, '$end_of_table') -> notfound;
+find_cast(_, _, '$end_of_table') -> [];
 find_cast(Name, TableRef, Key) ->
   Title = ets:lookup_element(TableRef, Key, 2),
   
