@@ -22,9 +22,9 @@ erl -name client@ip -setcookie x
 wxclient:start().
 ```
 
->   * -name can be -sname for local connection run
+>   * `-name` can be `-sname` for local connection run
 >   * `ip` is the to be replaced with the ip address over the corresponding file is been run on
->   * Need to update InputFiles/servers.txt with the list of all the servers node available (replace i with the number of the server)
+>   * Need to update `InputFiles/servers.txt` with the list of all the servers node available (replace `{i}` with the number of the server)
 
 
 ## Input
