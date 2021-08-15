@@ -148,22 +148,6 @@ handle_cast({server_down, Node},  State = #master_state{}) ->
   io:format("~nServer ~p is DOWN\t~p Server(s) Running!~n~n", [Node, length(NewList)]),
   {noreply, State#master_state{servers = NewList}};
 
-% handle_cast(test, State = #master_state{}) ->
-%   spawn_monitor(
-%     fun() ->
-%       G = digraph:new(),
-%       V1 = digraph:add_vertex(G, "A","A"),
-%       V2 = digraph:add_vertex(G, "B","B"),
-%       V3 = digraph:add_vertex(G, "C","C"),
-%       E1 = digraph:add_edge(G, V1, V2),
-%       E2 = digraph:add_edge(G, V1, V3),
-%       FileName = graph:generate_graph(G),
-%       Reply = os:cmd(io_lib:format("xdg-open ~s", [FileName])),
-%       io:format("Opening file ~s: ~p~n", [FileName, Reply])
-%     end
-%   ),
-%   {noreply, State};
-
 handle_cast(_Request, State = #master_state{}) ->
   {noreply, State}.
 
@@ -220,6 +204,7 @@ fetch_name(NameID, DB) ->
 
 broadcast([], _, _) -> ok;
 broadcast(Servers, Type, Message) ->
+  io:format("Sending Message to ~p (~p servers).~n", [Servers, length(Servers)]),
   case Type of
     cast -> lists:foreach(fun(S) -> gen_server:cast({server, S}, Message) end, Servers);
     call -> lists:map(fun(S) -> gen_server:call({server, S}, Message) end, Servers);
@@ -230,13 +215,13 @@ broadcast(Servers, Type, Message) ->
 
 process_request(Request = #request{}, From, Servers) ->
   io:format("Received a new Request: Name = ~p\tType = ~p\tLevel = ~p~n", [Request#request.name, Request#request.type, Request#request.level]),
-  G = digraph:new([protected]),
+  G = digraph:new(),
   Root = digraph:add_vertex(G, Request#request.name, Request#request.name),
   Set = sets:new(),
   process_request(G, Root, sets:add_element(Request#request.name, Set), Request, 1, Servers),
   gen_server:reply(From, {length(digraph:edges(G)), length(digraph:vertices(G))}),
-  % FileName = generate_graph(G, Root, Request#request.type),
-  FileName = generate_graph(G),
+  FileName = generate_graph(G, Root, Request#request.type),
+  % FileName = generate_graph(G),
   Reply = os:cmd(io_lib:format("xdg-open ~s", [FileName])),
   io:format("Opening file ~s: ~p~n", [FileName, Reply]).
 
