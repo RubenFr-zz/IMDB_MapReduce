@@ -1,4 +1,26 @@
-# Final Project
+# Final Project - Map Reduce in Erlang over IMDb
+
+> You can find the data base [HERE](https://datasets.imdbws.com)
+
+## Run
+
+After compilation of every file do
+
+### Server (Worker)
+```bash
+erl -name server{i}@ip -setcookie x -run server start_link
+```
+
+### Master
+```bash
+erl -name master@ip -setcookie x -run master start_link
+```
+
+### Client
+```bash
+erl -name client@ip -setcookie x
+wxclient:start().
+```
 
 ## Input
 
