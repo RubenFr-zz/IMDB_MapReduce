@@ -72,3 +72,6 @@ The four computers will receive a quarter of the file.
 The first step will be to remove unused information such as: originalTitle, isAdult, startYear, endYear, runtimeMinutes
 and to keep: **tconst, titleType, primaryTitle, genres**
 
+## Runtime video
+You can find the video [HERE](https://www.youtube.com/watch?v=H0qoDcPcLVk)
+
