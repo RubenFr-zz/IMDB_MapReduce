@@ -16,7 +16,7 @@ map(F, Es) ->
 	Running = [
 		spawn_monitor(fun() -> Parent ! {self(), F(E)} end) 
 		|| E <- Es],
-   	collect(Running, 5000).
+   	collect(Running, infinity).
 
 map(F, Es, Timeout) ->
 	Parent = self(),
@@ -30,7 +30,6 @@ collect([{Pid, MRef} | Next], Timeout) ->
 	receive
 		{Pid, Res} ->
 			erlang:demonitor(MRef, [flush]),
-			% io:format("Received Reply (from ~p): ~p~n", [Pid, Res]),
 			[Res | collect(Next, Timeout)];
 		{'DOWN', MRef, process, Pid, Reason} ->
 			[{error, Reason} | collect(Next, Timeout)]
