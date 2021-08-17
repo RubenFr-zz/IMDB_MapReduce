@@ -153,6 +153,7 @@ handle_cast(stop_init, State = #server_state{titles_db = TitlesTable, actors_db 
   ets:tab2file(ActorsTable, "table_actors_" ++ ID),
   send_file_to_master("table_actors_" ++ ID),
 
+  monitor_master(),
   {noreply, State#server_state{titles_db = NewTitlesTable}};
 
 handle_cast(_Request, State = #server_state{}) ->
@@ -378,3 +379,15 @@ change_key(TableRef) ->
 
   ets:delete(TableRef),
   NewTable.
+
+%%%===================================================================
+%%% Internal functions - monitor_master
+%%%===================================================================
+
+%% @doc Monitor master node, terminate if goes down
+-spec monitor_master() -> ok.
+monitor_master() ->
+  monitor_node(?MASTER_NODE, true),
+  receive
+    {nodedown, ?MASTER_NODE} -> gen_server:stop({server, node()})
+  end.
