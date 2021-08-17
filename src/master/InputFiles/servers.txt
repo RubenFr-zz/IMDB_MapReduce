@@ -1,0 +1,4 @@
+server1@007-lnx-c1-n
+server2@007-lnx-c1-n
+server3@007-lnx-c1-n
+server4@007-lnx-c1-n
