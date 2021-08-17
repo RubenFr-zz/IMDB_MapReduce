@@ -21,9 +21,10 @@
 -import(mapreduce, [mapreduce/3]).
 
 -define(SERVER, ?MODULE).
--define(MASTER_NODE, 'master@132.72.104.125').
+%%-define(MASTER_NODE, 'master@132.72.104.125').
+-define(MASTER_NODE, 'master@ubuntu').
 
--record(server_state, {imdb, namePid}).
+-record(server_state, {titles_db, actors_db}).
 -record(title, {id, title, type, genres, cast}).
 -record(request, {name, type, level}).
 
@@ -31,13 +32,13 @@
 %%% API
 %%%===================================================================
 
-%% @doc Spawns the server and registers the local name (unique)
+%% @doc Spawns the server and registers the global name (unique)
 -spec(start_link() ->
   {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link() ->
-  {ok, PID} = gen_server:start_link({global, node()}, ?MODULE, [], []),
-  register(server, PID),
-  {ok, PID}.
+  {ok, Pid} = gen_server:start_link({global, node()}, ?MODULE, [], []),
+  register(server, Pid),
+  {ok, Pid}.
 
 %%%===================================================================
 %%% gen_server callbacks - init
@@ -52,7 +53,9 @@ start_link() ->
 init([]) ->
   delete_all_backups(),
   io:format("Server started.~n"),
-  {ok, #server_state{imdb = ets:new(imdb, [ordered_set, public, {read_concurrency, true}])}}.
+  {ok, #server_state{
+    titles_db = ets:new(title_db, [ordered_set, public, {read_concurrency, true}]),
+    actors_db = ets:new(name_db, [ordered_set, public, {read_concurrency, true}])}}.
 
 %%%===================================================================
 %%% gen_server callbacks - handle_call
@@ -69,23 +72,30 @@ init([]) ->
   {stop, Reason :: term(), Reply :: term(), NewState :: #server_state{}} |
   {stop, Reason :: term(), NewState :: #server_state{}}).
 
+%% Job request -> Request = #request{}
 handle_call({request, Request = #request{}}, From, State = #server_state{}) ->
-  spawn(fun() -> process_request(Request, From, State#server_state.imdb) end),
+  spawn(fun() -> process_request(Request, From, State) end),
   {noreply, State};
 
+%% Reset request -> delete all backups and db on the node
 handle_call(reset, _From, State = #server_state{}) ->
   io:format("~n~nRESET REQUESTED!~n~n"),
   delete_all_backups(),
-  ets:delete(State#server_state.imdb),
-  {reply, ack, #server_state{imdb = ets:new(imdb, [ordered_set, public, {read_concurrency, true}])}};
+  ets:delete(State#server_state.titles_db),
+  ets:delete(State#server_state.actors_db),
+  {reply, ack, #server_state{
+    titles_db = ets:new(title_db, [ordered_set, public, {read_concurrency, true}]),
+    actors_db = ets:new(name_db, [ordered_set, public, {read_concurrency, true}])}};
 
-handle_call({handle_new_data, Node}, _From, State = #server_state{}) ->
+%% Merge request -> merge the current db with the backup from Node
+handle_call({merge, Node}, _From, State = #server_state{}) ->
   io:format("~nMerging with data base of ~p~n~n", [Node]),
-  Reply = add_new_data_to_imdb(State#server_state.imdb, Node),
+  Reply = merge_db(State, Node),
   {reply, Reply, State};
 
+%% Other request -> not handled
 handle_call(_Request, _From, State = #server_state{}) ->
-  {reply, ok, State}.
+  {reply, unknown_request, State}.
 
 %%%===================================================================
 %%% gen_server callbacks - handle_cast
@@ -100,41 +110,50 @@ handle_call(_Request, _From, State = #server_state{}) ->
 
 handle_cast({step1, Line}, State = #server_state{}) ->
   Data = string:split(Line, "\t", all),
-  Title = parseTitle(Data),
-  ets:insert_new(State#server_state.imdb, {Title#title.id, Title}),
+  Title = parse_title(Data),
+  ets:insert_new(State#server_state.titles_db, {Title#title.id, Title}),
   {noreply, State};
 
-handle_cast({step2, Line}, State = #server_state{}) ->
+handle_cast({step2, Line}, State = #server_state{titles_db = MoviesTable, actors_db = ActorsTable}) ->
   Data = string:split(Line, "\t", all),
-  {ID, NameID, Role} = parsePrincipal(Data),
-  if 
-    Role =:= "actor" orelse Role =:= "actress" ->  
+  {ID, NameID, Role} = parse_principal(Data),
+  if
+    Role =:= "actor" orelse Role =:= "actress" ->
       case fetch_name(NameID) of
         not_found -> pass;
-        Name -> 
-          case ets:lookup(State#server_state.imdb, ID) of
-            [] -> io:format("ID = ~p NOT FOUND!", [ID]);
-            [{_, Title = #title{}}] -> 
-              ets:insert(State#server_state.imdb, {ID, Title#title{cast = [Name | Title#title.cast]}})
+        Name ->
+          case {ets:lookup(MoviesTable, ID), ets:lookup(ActorsTable, Name)} of
+            {[], _} -> io:format("ID = ~p NOT FOUND!", [ID]);
+            {[{ID, Title = #title{cast = Cast}}], []} ->
+              ets:insert(MoviesTable, {ID, Title#title{cast = [Name | Cast]}}),
+              ets:insert_new(ActorsTable, {Name, [Title#title.title]});
+            {[{ID, Title = #title{cast = Cast}}], [{Name, Movies}]} ->
+              ets:insert(MoviesTable, {ID, Title#title{cast = [Name | Cast]}}),
+              ets:insert(ActorsTable, {Name, [Title#title.title | Movies]})
           end
       end;
     true -> ok
   end,
   {noreply, State};
 
-handle_cast(stop_init, State = #server_state{}) ->
-  FileName = "table_" ++ hd(string:split(atom_to_list(node()), "@")),
+handle_cast(stop_init, State = #server_state{titles_db = TitlesTable, actors_db = ActorsTable}) ->
+  io:format("Init Terminated.~n"),
+  ID = hd(string:split(atom_to_list(node()), "@")),
+  NewTitlesTable = change_key(TitlesTable),
 
-  delete_unecessary(State#server_state.imdb),
-  
-  % Save the table in two forms
-  print_to_file(State#server_state.imdb, FileName ++ ".txt"),
-  ets:tab2file(State#server_state.imdb, FileName),
+  % Save the movies table in two forms
+  io:format("Saving Movies Table -> ~p elements~n", [ets:info(NewTitlesTable, size)]),
+  tab2file(NewTitlesTable, "table_movies_" ++ ID ++ ".txt"),
+  ets:tab2file(NewTitlesTable, "table_movies_" ++ ID),
+  send_file_to_master("table_movies_" ++ ID),
 
-  send_file_to_master(FileName),
+  % Save the actors table in two forms
+  io:format("Saving Actors Table -> ~p elements~n", [ets:info(ActorsTable, size)]),
+  tab2file(ActorsTable, "table_actors_" ++ ID ++ ".txt"),
+  ets:tab2file(ActorsTable, "table_actors_" ++ ID),
+  send_file_to_master("table_actors_" ++ ID),
 
-  io:format("Table available at ~s~n~n", [FileName ++ ".txt"]),
-  {noreply, State};
+  {noreply, State#server_state{titles_db = NewTitlesTable}};
 
 handle_cast(_Request, State = #server_state{}) ->
   {noreply, State}.
@@ -165,8 +184,8 @@ handle_info(_Info, State = #server_state{}) ->
 -spec(terminate(Reason :: (normal | shutdown | {shutdown, term()} | term()),
     State :: #server_state{}) -> term()).
 
-terminate(_Reason, _State = #server_state{}) ->
-  ok.
+terminate(Reason, _State = #server_state{}) ->
+  gen_server:cast({master, ?MASTER_NODE}, {server_down, node(), Reason}).
 
 %%%===================================================================
 %%% gen_server callbacks - code_change
@@ -181,10 +200,12 @@ code_change(_OldVsn, State = #server_state{}, _Extra) ->
   {ok, State}.
 
 %%%===================================================================
-%%% Internal functions
+%%% Internal functions - parse_title
 %%%===================================================================
 
-parseTitle(Title) ->
+%% @doc Get a line from the basic.tsv and return a title record with the info
+-spec(parse_title(Title :: string()) -> #title{}).
+parse_title(Title) ->
   #title{
     id = element(1, string:to_integer(string:sub_string(lists:nth(1, Title), 3))),
     title = lists:nth(4, Title),
@@ -193,155 +214,158 @@ parseTitle(Title) ->
     cast = []
   }.
 
-parsePrincipal(Principal) ->
-  { 
-    element(1, string:to_integer(string:sub_string(lists:nth(1, Principal), 3))), 
+%%%===================================================================
+%%% Internal functions - parse_principal
+%%%===================================================================
+
+%% @doc Get a line from the principals.tsv and return a tuple with some info
+-spec(parse_principal(Principal :: string()) ->
+  {ID :: integer(), NameID :: string(), Role :: string()}).
+parse_principal(Principal) ->
+  {
+    element(1, string:to_integer(string:sub_string(lists:nth(1, Principal), 3))),
     lists:nth(3, Principal),
     lists:nth(4, Principal)
   }.
 
+%%%===================================================================
+%%% Internal functions - fetch_name
+%%%===================================================================
+
+%% @doc Send a request to master to get the associated name
+-spec(fetch_name(NameID :: string()) -> Name :: string()).
 fetch_name(NameID) ->
   gen_server:call({master, ?MASTER_NODE}, {name, NameID}).
 
+%%%===================================================================
+%%% Internal functions - process_request
+%%%===================================================================
 
-process_request(Request = #request{}, From, TableRef) ->
+%% @doc Process a request sent from master
+-spec(process_request(Request :: #request{}, From :: {pid(), Tag :: term()}, State :: #server_state{}) -> ok).
+process_request(Request = #request{}, From, #server_state{actors_db = ActorsTable, titles_db = MoviesTable}) ->
   ID = erlang:unique_integer([positive]),
-  io:format("Received a new Request (~p): Name = ~p\tType = ~p~n", [ID, Request#request.name, Request#request.type]),
-  
+  io:format("Request ~p: Name = ~p\tType = ~p~n", [ID, Request#request.name, Request#request.type]),
+
   Start = os:timestamp(),
   case Request#request.type of
-    cast -> Reply = cast_request(Request, TableRef);
-    title -> Reply = title_request(Request, TableRef);
-    _other -> Reply = badarg
+    cast -> Reply = process_request(Request, ActorsTable, MoviesTable);
+    title -> Reply = process_request(Request, MoviesTable, ActorsTable);
+    _other -> Reply = bad_arg
   end,
+  io:format("Result for Request ~p: ~p~n", [ID, Reply]),
   io:format("Processing the request (~p) took ~p ms.~n", [ID, round(timer:now_diff(os:timestamp(), Start) / 1000)]),
-  
-  gen_server:reply(From, Reply).
+  gen_server:reply(From, Reply);
 
-cast_request(Request = #request{}, TableRef) ->
+
+process_request(Request = #request{}, First, Second) ->
   Name = Request#request.name,
-  MapFun = fun({_ID, Title = #title{}}) -> {Name, Title#title.cast} end,
-  RedFun = fun({Actor, Actors}) -> 
-    case lists:member(Actor, Actors) of
-      false -> false;
-      true ->  Actors
-    end
-  end,
-  {List, Acc} = mapreduce(TableRef, MapFun, RedFun),
-  io:format("Map Reduce output: ~p with ~p processes~n", [List, Acc]),
-  Set = sets:from_list(List),
-  sets:to_list(sets:del_element(Name, Set)).
-
-title_request(Request = #request{}, TableRef) ->
-  Name = Request#request.name,
-  case find_cast(Request#request.name, TableRef) of
-    [] -> 
-      io:format("Map Reduce output: ~p with ~p processes~n", [[], 1]),
-      [];
-    Cast ->
-      MapFun = fun({_ID, Title = #title{}}) -> {Cast, Title#title.title, Title#title.cast} end,
-      RedFun = fun({MovieCast, Title, Actors}) -> 
-        case lists:foldr(fun(X, Acc) -> Acc or sets:is_element(X, MovieCast) end, false, Actors) of
-          false -> false;
-          true ->  [Title]
-        end
-      end,
-
-      {List, Acc} = mapreduce(TableRef, MapFun, RedFun),
-      io:format("Map Reduce output: ~p with ~p processes~n", [List, Acc]),
-      Set = sets:from_list(List),
-      sets:to_list(sets:del_element(Name, Set))
+  case ets:lookup(First, Name) of
+    [] -> [];
+    [{Name, L1}] ->
+      lists:foldr(
+        fun(E, Acc) ->
+          case ets:lookup(Second, E) of
+            [] -> [];
+            [{E, L2}] -> L2 ++ Acc
+          end
+        end, [], L1)
   end.
 
+%%%===================================================================
+%%% Internal functions - merge_db
+%%%===================================================================
 
-find_cast(Title, TableRef) ->
-  find_cast(Title, TableRef, ets:first(TableRef)).
-
-find_cast(_, _, '$end_of_table') -> [];
-find_cast(Name, TableRef, Key) ->
-  Title = ets:lookup_element(TableRef, Key, 2),
-  
-  case Name == Title#title.title of
-    false -> find_cast(Name, TableRef, ets:next(TableRef, Key));
-    true -> lists:foldl(
-              fun(X, S) -> sets:add_element(X, S) end, 
-              sets:new(), Title#title.cast)
-  end.
-
-
-%% Merge the current table of the server with the one of a 'dead node'
-add_new_data_to_imdb(TableRef, DeadNode) ->
-  DeadFileName = "table_" ++ hd(string:split(atom_to_list(DeadNode), "@")),
-  case ets:file2tab(DeadFileName) of
+%% @doc Merge the current table of the server with the one of a 'dead node'
+-spec(merge_db(State :: #server_state{}, DeadNode :: atom()) ->
+  ack |
+  {error, Reason :: term()}).
+merge_db(State = #server_state{}, DeadNode) ->
+  ID = hd(string:split(atom_to_list(DeadNode), "@")),
+  case ets:file2tab("table_movies_" ++ ID) of
     {error, Reason} -> {error, Reason};
-    {ok, NewTable} -> add_new_data_to_imdb(TableRef, NewTable, ets:first(NewTable), DeadFileName)
-  end.
+    {ok, ETS} ->
+      file:delete("table_movies_" ++ ID),
+      merge_db(State#server_state.titles_db, ETS),
+      case ets:file2tab("table_actors_" ++ ID) of
+        {error, Reason} -> {error, Reason};
+        {ok, ETS} ->
+          file:delete("table_actors_" ++ ID),
+          merge_db(State#server_state.actors_db, ETS)
+      end
+  end;
 
-add_new_data_to_imdb(TableRef, NewTable, '$end_of_table', DeadFileName) -> 
-  FileName = "table_" ++ hd(string:split(atom_to_list(node()), "@")),
-  
-  % Remove the previous versions of the files
-  file:delete(FileName),
-  file:delete(FileName ++ ".txt"),
-  file:delete(DeadFileName),
+merge_db(TableRef, ToMerge) ->
+  lists:foreach(fun(X) -> ets:insert_new(TableRef, X) end, ets:tab2list(ToMerge)),
+  ets:delete(ToMerge),
+  ack.
 
-  % Save the table in two forms
-  print_to_file(TableRef, FileName ++ ".txt"),
-  ets:tab2file(TableRef, FileName),
+%%%===================================================================
+%%% Internal functions - send_file_to_master
+%%%===================================================================
 
-  send_file_to_master(FileName),
-  ets:delete(NewTable), 
-  ack;
-add_new_data_to_imdb(TableRef, NewTable, Key, DeadFileName) ->
-  ets:insert_new(TableRef, {Key, ets:lookup_element(NewTable, Key, 2)}),
-  add_new_data_to_imdb(TableRef, NewTable, ets:next(NewTable, Key), DeadFileName).
-
-
-%% Send a copy of the table to the master to distribute it to other severs for backup
+%% @doc Start a daemon process for the master to download the file
+-spec send_file_to_master(FileName :: string()) -> ok.
 send_file_to_master(FileName) ->
-  {ok, Bin} = file:read_file(FileName), % Send tab2file
-  % {ok, Bin} = file:read_file(FileName ++ ".txt"), % Send text file
+  Start = os:timestamp(),
 
-  Reply = rpc:call(?MASTER_NODE, file, write_file, [FileName, Bin]),
-  gen_server:cast({master, ?MASTER_NODE}, {distribute, node(), FileName}),
-  io:format("~nTable sent to master: ~p~n", [Reply]).
+  {ok, Bin} = file:read_file(FileName),
+  rpc:call(?MASTER_NODE, file, write_file, [FileName, Bin]),
 
-    
-print_to_file(TableRef, FileName) -> 
+  Reply = gen_server:call({master, ?MASTER_NODE}, {distribute_files, node(), FileName}),
+  io:format("~n~p sent to master in ~p ms~nReply from master: ~p~n",
+    [FileName, round(timer:now_diff(os:timestamp(), Start) / 1000), Reply]).
+
+%%%===================================================================
+%%% Internal functions - tab2file
+%%%===================================================================
+
+%% @doc Print a Table to a file (in strings and not table)
+-spec tab2file(TableRef :: term(), Filename :: string()) -> ok | {error, Reason} when
+  Reason :: badarg | terminated | system_limit.
+
+tab2file(TableRef, FileName) ->
   try
     file:delete(FileName)
   catch
     error: _Error -> {os:system_time(), error, io_lib:format("File ~p doesn't exist", [FileName])}
   end,
-  print_to_file(FileName, TableRef, ets:first(TableRef)).
+  {ok, Fd} = file:open(FileName, [write, append]),
+  lists:foreach(fun({X, Y}) ->
+    file:write(Fd, io_lib:format("~s\t~s~n", [X, string:join(Y, ", ")])) end, ets:tab2list(TableRef)),
+  file:close(Fd),
+  io:format("New File available: ~p~n", [FileName]).
 
-print_to_file(_, _, '$end_of_table') -> ok;
-print_to_file(FileName, TableRef, Key) ->
-  Title = ets:lookup_element(TableRef, Key, 2),
-  ok = file:write_file(FileName, io_lib:format("~p\t~s\t~s\t~s\t~s~n", [Title#title.id, Title#title.title, Title#title.type, Title#title.genres, string:join(Title#title.cast, ",")]), [write, append]),
-  print_to_file(FileName, TableRef, ets:next(TableRef, Key)).
+%%%===================================================================
+%%% Internal functions - delete_all_backups
+%%%===================================================================
 
-
-delete_unecessary(TableRef) -> delete_unecessary(TableRef, ets:first(TableRef)).
-delete_unecessary(_, '$end_of_table') -> ok;
-delete_unecessary(TableRef, Key) -> 
-  Title = ets:lookup_element(TableRef, Key, 2),
-  case Title#title.cast of
-    undefined -> ets:delete(TableRef, Key);
-    NotList when not is_list(NotList) -> ets:delete(TableRef, Key);
-    [] -> ets:delete(TableRef, Key);
-    _ -> ok
-  end,
-  delete_unecessary(TableRef, ets:next(TableRef, Key)).
-
+%% @doc Delete all the files in the working directory that start with table
+-spec delete_all_backups() -> ok.
 delete_all_backups() ->
   {ok, Dir} = file:get_cwd(),
   {ok, Files} = file:list_dir(Dir),
   lists:foreach(
-    fun(File) -> 
+    fun(File) ->
       case hd(string:split(File, "_")) == "table" of
         true -> file:delete(File);
         false -> ok
-      end 
-    end, 
-  Files).  
+      end
+    end,
+    Files).
+
+%%%===================================================================
+%%% Internal functions - change_key
+%%%===================================================================
+
+%% @doc Change the key for the titles_db -> ID to Title
+-spec change_key(TableRef :: term()) -> ok.
+change_key(TableRef) ->
+  ets:match_delete(TableRef, {'_', #title{id = '_', title = '_', type = '_', genres = '_', cast = []}}),
+
+  NewTable = ets:new(title_db, [ordered_set, public, {read_concurrency, true}]),
+  lists:foreach(fun({_, #title{title = Title, cast = Cast}}) ->
+    ets:insert_new(NewTable, {Title, Cast}) end, ets:tab2list(TableRef)),
+
+  ets:delete(TableRef),
+  NewTable.
