@@ -19,7 +19,7 @@ erl -name master@ip -setcookie x -run master start_link
 ### Client
 ```bash
 erl -name client@ip -setcookie x
-wxclient:start().
+client:start().
 ```
 
 >   * `-name` can be `-sname` for local connection run
