@@ -23,7 +23,7 @@
 -define(SERVER, master).
 -define(SERVERS_FILENAME, "InputFiles/servers.txt").
 
--record(master_state, {servers, namePID}).
+-record(master_state, {servers, namePID, monitor}).
 -record(request, {name, type, level}).
 
 %%%===================================================================
@@ -68,6 +68,14 @@ init([]) ->
   {noreply, NewState :: #master_state{}, timeout() | hibernate} |
   {stop, Reason :: term(), Reply :: term(), NewState :: #master_state{}} |
   {stop, Reason :: term(), NewState :: #master_state{}}).
+
+%% A node is up, monitor it and redistribute the data
+handle_call({register, Node}, _From, State = #master_state{servers = Servers, monitor = Pid}) ->
+  broadcast(Servers, pcall, reset),
+  dataInit:distribute([Node | Servers]),
+  broadcast([Node | Servers], cast, stop_init), % Tell the servers the init is over
+  Pid ! {register, Node},
+  {reply, ok, State#master_state{servers = [Node | Servers]}};
 
 %% Return as a reply the name associated to the NameId
 handle_call({name, NameID}, From, State = #master_state{}) ->
@@ -115,17 +123,17 @@ handle_cast(init, State = #master_state{}) ->
 
   {NodesAlive, NamePID} = dataInit:start_distribution(),  % Distribute the data to the servers
   broadcast(NodesAlive, cast, stop_init), % Tell the servers the init is over
+  Monitor = spawn_link(fun() -> monitor_servers(NodesAlive) end),
 
   io:format("Distributed data to ~p servers in ~p ms.~n", [length(NodesAlive), round(timer:now_diff(os:timestamp(), Start) / 1000)]),
-  {noreply, State#master_state{servers = NodesAlive, namePID = NamePID}};
+  {noreply, State#master_state{servers = NodesAlive, namePID = NamePID, monitor = Monitor}};
 
 %% Handle Server Down
-handle_cast({server_down, Node, Reason}, State = #master_state{}) ->
-  NewList = State#master_state.servers -- [Node],
+handle_cast({server_down, Node}, State = #master_state{servers = RunningServers}) ->
+  NewList = RunningServers -- [Node],
+  io:format("~nServer ~p is DOWN\t~p Server(s) Running!~n~n", [Node, length(NewList)]),
 
   dataInit:redistribute(NewList, Node),     % Tell to one of the servers running to handle the data of the server down
-
-  io:format("~nServer ~p is DOWN: ~p\t~p Server(s) Running!~n~n", [Node, Reason, length(NewList)]),
   {noreply, State#master_state{servers = NewList}};
 
 handle_cast(_Request, State = #master_state{}) ->
@@ -156,7 +164,8 @@ handle_info(_Info, State = #master_state{}) ->
 %% with Reason. The return value is ignored.
 -spec(terminate(Reason :: (normal | shutdown | {shutdown, term()} | term()),
     State :: #master_state{}) -> term()).
-terminate(_Reason, State = #master_state{}) ->
+terminate(_Reason, State = #master_state{monitor = Pid}) ->
+  Pid ! stop,
   broadcast(State#master_state.servers, cast, master_down).
 
 %%%===================================================================
@@ -200,7 +209,6 @@ process_request(Request = #request{}, From, Servers) ->
   process_request(G, Root, sets:add_element(Request#request.name, Set), Request, 1, Servers),
   gen_server:reply(From, {length(digraph:edges(G)), length(digraph:vertices(G))}),
   FileName = generate_graph(G, Root, Request#request.type),
-  % FileName = generate_graph(G),
   Reply = os:cmd(io_lib:format("xdg-open ~s", [FileName])),
   io:format("Opening file ~s: ~p~n", [FileName, Reply]).
 
@@ -244,16 +252,6 @@ distribute_files(Node, FileName, Servers, From) ->
   gen_server:reply(From, Reply).
 
 %%%===================================================================
-%%% Internal functions - get_ip
-%%%===================================================================
-
-%% @doc Fin Ip Address of machine
--spec get_ip() -> ok.
-get_ip() ->
-  {ok, List} = inet:getifaddrs(),
-  hd([IP || {_, Opts} <- List, {addr, IP} <- Opts, size(IP) == 4, IP =/= {127, 0, 0, 1}]).
-
-%%%===================================================================
 %%% Internal functions - delete_all_backups
 %%%===================================================================
 
@@ -270,3 +268,28 @@ delete_all_backups() ->
       end
     end,
     Files).
+
+%%%===================================================================
+%%% Internal functions - delete_all_backups
+%%%===================================================================
+
+%% @doc Delete all the files in the working directory that start with table
+-spec monitor_servers(Nodes) -> ok when
+  Nodes :: [Node],
+  Node :: term().
+monitor_servers(Nodes) ->
+  lists:map(fun(N) -> monitor_node(N, true) end, Nodes),
+  monitor_servers().
+
+-spec monitor_servers() -> ok.
+monitor_servers() ->
+  receive
+    {monitor, Node} ->
+      io:format("MONITOR: Received New Node to monitor~p~n", [Node]),
+      monitor_node(Node, true);
+    {nodedown, Node} = Message ->
+      io:format("MONITOR: Received New Message~n~p~n", [Message]),
+      gen_server:cast({master, node()}, {server_down, Node}),
+      monitor_servers();
+    stop -> ok
+  end.
