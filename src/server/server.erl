@@ -389,5 +389,7 @@ change_key(TableRef) ->
 monitor_master() ->
   monitor_node(?MASTER_NODE, true),
   receive
-    {nodedown, ?MASTER_NODE} -> gen_server:stop({server, node()})
+    {nodedown, ?MASTER_NODE} -> 
+      io:format("Master Server Disconnected... Stopping Server ~p~n", [node()]),
+      gen_server:stop({server, node()})
   end.
