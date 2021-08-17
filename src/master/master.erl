@@ -23,7 +23,7 @@
 -define(SERVER, master).
 -define(SERVERS_FILENAME, "InputFiles/servers.txt").
 
--record(master_state, {servers, namePID, upPID, downPID}).
+-record(master_state, {servers, namePID}).
 -record(request, {name, type, level}).
 
 %%%===================================================================
@@ -36,7 +36,7 @@
 start_link() ->
   {ok, PID} = gen_server:start_link({global, ?SERVER}, ?MODULE, [], []),
   register(master, PID),
-  gen_server:cast({master, node()}, start),
+  gen_server:cast({master, node()}, init),
   {ok, PID}.
 
 %%%===================================================================
@@ -51,6 +51,7 @@ start_link() ->
 
 init([]) ->
   io:format("Master started.~n"),
+  delete_all_backups(),
   {ok, #master_state{}}.
 
 %%%===================================================================
@@ -68,31 +69,34 @@ init([]) ->
   {stop, Reason :: term(), Reply :: term(), NewState :: #master_state{}} |
   {stop, Reason :: term(), NewState :: #master_state{}}).
 
+%% Return as a reply the name associated to the NameId
 handle_call({name, NameID}, From, State = #master_state{}) ->
   case State#master_state.namePID of
     undefined -> {reply, not_available, State};
-    PID -> 
+    PID ->
       spawn_monitor(fun() -> gen_server:reply(From, fetch_name(NameID, PID)) end),
       {noreply, State}
   end;
 
-%% Type = cast | title (movie/show/short)
+%% Handle request from client
 handle_call({request, Request = #request{}}, From, State = #master_state{}) ->
-  spawn_monitor(fun() -> process_request(Request, From, State#master_state.servers) end),
+  spawn_link(fun() -> process_request(Request, From, State#master_state.servers) end),
   {noreply, State};
 
+%% Handle request from client
 handle_call({request, Name, Type, Level}, From, State = #master_state{}) ->
   Request = #request{name = Name, type = Type, level = Level},
-  spawn_monitor(fun() -> process_request(Request, From, State#master_state.servers) end),
+  spawn_link(fun() -> process_request(Request, From, State#master_state.servers) end),
   {noreply, State};
 
-handle_call(request, From, State = #master_state{}) ->
-  Request = #request{name = "Carmencita", type = title, level = 3},
-  spawn_monitor(fun() -> process_request(Request, From, State#master_state.servers) end),
+%% Handle distribute file request from server
+handle_call({distribute_files, Node, FileName}, From, State = #master_state{}) ->
+  spawn_link(fun() -> distribute_files(Node, FileName, State#master_state.servers, From) end),
   {noreply, State};
 
+%% Other request -> not handled
 handle_call(_Request, _From, State = #master_state{}) ->
-  {reply, ok, State}.
+  {reply, unknown_request, State}.
 
 %%%===================================================================
 %%% gen_server callbacks - handle_cast
@@ -105,47 +109,23 @@ handle_call(_Request, _From, State = #master_state{}) ->
   {noreply, NewState :: #master_state{}, timeout() | hibernate} |
   {stop, Reason :: term(), NewState :: #master_state{}}).
 
-handle_cast(start, State = #master_state{}) ->
+%% Init the system
+handle_cast(init, State = #master_state{}) ->
   Start = os:timestamp(),
 
-  {NodesAlive, NamePID} = dataInit:start_distribution(),
-    
-  broadcast(NodesAlive, cast, stop_init),
-  UpPID = spawn(fun() -> check_server_up([], dataInit:servers() -- NodesAlive) end),
-  DownPID = spawn(fun() -> check_server_down([], NodesAlive) end),
-  
+  {NodesAlive, NamePID} = dataInit:start_distribution(),  % Distribute the data to the servers
+  broadcast(NodesAlive, cast, stop_init), % Tell the servers the init is over
+
   io:format("Distributed data to ~p servers in ~p ms.~n", [length(NodesAlive), round(timer:now_diff(os:timestamp(), Start) / 1000)]),
-  {noreply, State#master_state{servers = NodesAlive, namePID = NamePID, upPID = UpPID, downPID = DownPID}};
+  {noreply, State#master_state{servers = NodesAlive, namePID = NamePID}};
 
-handle_cast({distribute, Node, FileName}, State = #master_state{}) ->
-  Reply = pmap:map(
-    fun(S) -> 
-      {ok, Bin} = file:read_file(FileName),
-      ok = rpc:call(S, file, write_file, [FileName, Bin])
-      % ok = file:delete(FileName) 
-    end,
-    State#master_state.servers -- [Node]),
-  io:format("Distributed data from ~p to other servers -> ~p~n", [Node, Reply]),
-  {noreply, State};
-
-handle_cast({server_up, Node},  State = #master_state{}) ->
-  NewList = [Node | State#master_state.servers],
-
-  State#master_state.downPID ! {new_node, Node}, % Update the list of servers to check if down
-  broadcast(NewList, pcall, reset),           % Tell to all the servers to discard the data they had until now
-  dataInit:distribute(NewList),               % Distribute the data to the servers in NewList
-  broadcast(NewList, cast, stop_init),     % Tell to all the servers the init is finished
-
-  io:format("~nNew Server is UP: ~p\t~p Server(s) Running!~n~n", [Node, length(NewList)]),
-  {noreply, State#master_state{servers = NewList}};
-
-handle_cast({server_down, Node},  State = #master_state{}) ->
+%% Handle Server Down
+handle_cast({server_down, Node, Reason}, State = #master_state{}) ->
   NewList = State#master_state.servers -- [Node],
 
-  State#master_state.upPID ! {new_node, Node}, % Update the list of servers to check if up
   dataInit:redistribute(NewList, Node),     % Tell to one of the servers running to handle the data of the server down
-  
-  io:format("~nServer ~p is DOWN\t~p Server(s) Running!~n~n", [Node, length(NewList)]),
+
+  io:format("~nServer ~p is DOWN: ~p\t~p Server(s) Running!~n~n", [Node, Reason, length(NewList)]),
   {noreply, State#master_state{servers = NewList}};
 
 handle_cast(_Request, State = #master_state{}) ->
@@ -176,8 +156,8 @@ handle_info(_Info, State = #master_state{}) ->
 %% with Reason. The return value is ignored.
 -spec(terminate(Reason :: (normal | shutdown | {shutdown, term()} | term()),
     State :: #master_state{}) -> term()).
-terminate(_Reason, _State = #master_state{}) ->
-  ok.
+terminate(_Reason, State = #master_state{}) ->
+  broadcast(State#master_state.servers, cast, master_down).
 
 %%%===================================================================
 %%% gen_server callbacks - code_change
@@ -196,7 +176,6 @@ code_change(_OldVsn, State = #master_state{}, _Extra) ->
 %%%===================================================================
 
 fetch_name(NameID, DB) ->
-  % io:format("Receive name request (from ~p): ~p~n", [From, NameID]),
   DB ! {self(), NameID},
   receive
     Name -> Name
@@ -204,7 +183,7 @@ fetch_name(NameID, DB) ->
 
 broadcast([], _, _) -> ok;
 broadcast(Servers, Type, Message) ->
-  io:format("Sending Message to ~p (~p servers).~n", [Servers, length(Servers)]),
+  io:format("Sending Message (~p) to ~p (~p servers).~n", [Message, Servers, length(Servers)]),
   case Type of
     cast -> lists:foreach(fun(S) -> gen_server:cast({server, S}, Message) end, Servers);
     call -> lists:map(fun(S) -> gen_server:call({server, S}, Message) end, Servers);
@@ -249,51 +228,45 @@ parse_reply(List) -> parse_reply(List, []).
 parse_reply([], Reply) -> sets:to_list(sets:from_list(Reply));
 parse_reply([badarg | _], _) -> badarg;
 parse_reply([notfound | Next], Reply) -> parse_reply(Next, Reply);
-parse_reply([R | Next], Reply) -> parse_reply(Next, R ++ Reply). 
+parse_reply([R | Next], Reply) -> parse_reply(Next, R ++ Reply).
 
 
-check_server_up([], []) ->
-  receive
-    NewNode when is_atom(NewNode) -> check_server_up(NewNode, [])
-  end;
+distribute_files(Node, FileName, Servers, From) ->
+  {ok, Bin} = file:read_file(FileName),
+  Reply = pmap:map(
+    fun(S) ->
+      ok = rpc:call(S, file, write_file, [FileName, Bin])
+    end,
+    Servers -- [Node]),
+  ok = file:delete(FileName),
+  io:format("Distributed data from ~p to other servers -> ~p~n", [Node, Reply]),
 
-check_server_up([], Servers) -> check_server_up(Servers, []);
+  gen_server:reply(From, Reply).
 
-check_server_up([ToCheck | Next], Servers) ->
-  case net_kernel:connect_node(ToCheck) of
-    true -> 
-      % io:format("Server ~p is UP!~n", [ToCheck]),
-      gen_server:cast({master, node()}, {server_up, ToCheck}),
-      check_server_up(Next, Servers);
-    false -> 
-      receive
-        {new_node, NewNode} -> 
-          % io:format("Up Checker: New Node to check ~p~n", [NewNode]),
-          check_server_up(Next, [ToCheck, NewNode | Servers])
-      after
-        1000 -> check_server_up(Next, [ToCheck | Servers])
+%%%===================================================================
+%%% Internal functions - get_ip
+%%%===================================================================
+
+%% @doc Fin Ip Address of machine
+-spec get_ip() -> ok.
+get_ip() ->
+  {ok, List} = inet:getifaddrs(),
+  hd([IP || {_, Opts} <- List, {addr, IP} <- Opts, size(IP) == 4, IP =/= {127, 0, 0, 1}]).
+
+%%%===================================================================
+%%% Internal functions - delete_all_backups
+%%%===================================================================
+
+%% @doc Delete all the files in the working directory that start with table
+-spec delete_all_backups() -> ok.
+delete_all_backups() ->
+  {ok, Dir} = file:get_cwd(),
+  {ok, Files} = file:list_dir(Dir),
+  lists:foreach(
+    fun(File) ->
+      case hd(string:split(File, "_")) == "table" of
+        true -> file:delete(File);
+        false -> ok
       end
-  end.
-
-check_server_down([], []) ->
-  receive
-    {new_node, NewNode} -> check_server_down(NewNode, [])
-  end;
-
-check_server_down([], Servers) -> check_server_down(Servers, []);
-
-check_server_down([ToCheck | Next], Servers) ->
-  case net_kernel:connect_node(ToCheck) of
-    false -> 
-      % io:format("Server ~p is DOWN!~n", [ToCheck]),
-      gen_server:cast({master, node()}, {server_down, ToCheck}),
-      check_server_down(Next, Servers);
-    true -> 
-      receive
-        {new_node, NewNode} -> 
-          % io:format("Down Checker: New Node to check ~p~n", [NewNode]),
-          check_server_down(Next, [ToCheck, NewNode | Servers])
-      after
-        1000 -> check_server_down(Next, [ToCheck | Servers])
-      end
-  end.
+    end,
+    Files).
