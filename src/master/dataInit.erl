@@ -23,27 +23,21 @@ start_distribution() ->
   Servers = find_servers(read_file(?SERVERS_FILENAME), []),
   io:format("Found ~p server(s): ~p~n", [length(Servers), Servers]),
 
-  io:format("First Step started...~n"),
   NamePID = first_step(),
-
   distribute(Servers),
   {Servers, NamePID}.
 
 
 distribute(Servers) ->
-  io:format("Second Step started...~n"),
   second_step(Servers),
-  io:format("Second Step finished.~n"),
-
-  io:format("Third Step started...~n"),
   third_step(Servers),
-  io:format("Third Step finished.~n").
+  io:format("Data Distributed to ~p (~p severs).~n", [Servers, length(Servers)]).
 
 
 redistribute([], _) -> ok;
 redistribute(Servers, Down) -> 
   Chosen = distributeTo(Down, Servers),
-  case gen_server:call({server, Chosen}, {handle_new_data, Down}) of
+  case gen_server:call({server, Chosen}, {merge, Down}) of
     ack -> ok;
     {error, _} -> redistribute(Servers -- [distributeTo(Down, Servers)], Down)
   end.
@@ -60,7 +54,6 @@ first_step(Table) ->
 first_step(Table, File) ->
   case io:get_line(File, "") of
     eof ->
-      io:format("First Step finished.~n"),
       file:close(File),
       loop_names(Table);
     Line ->
