@@ -12,7 +12,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0]).
+-export([start_link/0, register_server/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
@@ -184,8 +184,8 @@ handle_info(_Info, State = #server_state{}) ->
 -spec(terminate(Reason :: (normal | shutdown | {shutdown, term()} | term()),
     State :: #server_state{}) -> term()).
 
-terminate(Reason, _State = #server_state{}) ->
-  gen_server:cast({master, ?MASTER_NODE}, {server_down, node(), Reason}).
+terminate(_Reason, _State = #server_state{}) ->
+  ok.
 
 %%%===================================================================
 %%% gen_server callbacks - code_change
@@ -198,6 +198,15 @@ terminate(Reason, _State = #server_state{}) ->
   {ok, NewState :: #server_state{}} | {error, Reason :: term()}).
 code_change(_OldVsn, State = #server_state{}, _Extra) ->
   {ok, State}.
+
+%%%===================================================================
+%%% Internal functions - parse_title
+%%%===================================================================
+
+%% @doc Get a line from the basic.tsv and return a title record with the info
+-spec register_server() -> ok.
+register_server() ->
+  ok = gen_server:call({master, ?MASTER_NODE}, {register, node()}).
 
 %%%===================================================================
 %%% Internal functions - parse_title
@@ -284,14 +293,14 @@ merge_db(State = #server_state{}, DeadNode) ->
   ID = hd(string:split(atom_to_list(DeadNode), "@")),
   case ets:file2tab("table_movies_" ++ ID) of
     {error, Reason} -> {error, Reason};
-    {ok, ETS} ->
+    {ok, ETS1} ->
       file:delete("table_movies_" ++ ID),
-      merge_db(State#server_state.titles_db, ETS),
+      merge_db(State#server_state.titles_db, ETS1),
       case ets:file2tab("table_actors_" ++ ID) of
         {error, Reason} -> {error, Reason};
-        {ok, ETS} ->
+        {ok, ETS2} ->
           file:delete("table_actors_" ++ ID),
-          merge_db(State#server_state.actors_db, ETS)
+          merge_db(State#server_state.actors_db, ETS2)
       end
   end;
 
