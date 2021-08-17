@@ -42,8 +42,8 @@ distribute(Servers) ->
 
 redistribute([], _) -> ok;
 redistribute(Servers, Down) -> 
-  Choosen = distributeTo(Down, Servers),
-  case gen_server:call({server, Choosen}, {handle_new_data, Down}) of
+  Chosen = distributeTo(Down, Servers),
+  case gen_server:call({server, Chosen}, {handle_new_data, Down}) of
     ack -> ok;
     {error, _} -> redistribute(Servers -- [distributeTo(Down, Servers)], Down)
   end.
@@ -130,6 +130,10 @@ parseName(Person) ->
     element(1, string:to_integer(string:sub_string(lists:nth(1, Person), 3))),
     lists:nth(2, Person)
   }.
+
+distributeTo(Key, Servers) when is_integer(Key) ->
+  Index = rand:uniform(length(Servers)),
+  lists:nth(Index, Servers);
 
 distributeTo(Key, Servers) ->
   Index = erlang:phash2(Key, length(Servers)),
