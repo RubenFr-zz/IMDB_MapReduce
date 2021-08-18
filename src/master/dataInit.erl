@@ -114,7 +114,7 @@ third_step(Servers) ->
 %%%===================================================================
 
 %% @doc Check each server if alive. Returns a list of server nodes which are running
--spec find_servers(Servers :: [S :: atom()], Nodes :: [N :: atom()]) -> Nodes.
+-spec find_servers(Servers :: [atom()], Nodes :: [atom()]) -> [atom()].
 
 find_servers([], Servers) -> Servers;
 find_servers([Server | Servers], Nodes) ->
@@ -133,7 +133,7 @@ find_servers([Server | Servers], Nodes) ->
 %%%===================================================================
 
 %% @doc Send line to corresponding server
--spec send_lines(Servers :: [S :: atom()], File :: device(), Step :: step1 | step2) -> ok.
+-spec send_lines(Servers :: [S :: atom()], File :: io:device(), Step :: step1 | step2) -> ok.
 
 send_lines(Servers, File, Step) ->
   case io:get_line(File, "") of
@@ -149,7 +149,7 @@ send_lines(Servers, File, Step) ->
 %%%===================================================================
 
 %% @doc Process that returns the name associated to the ID
--spec loop_names(Table :: tab()) -> ok.
+-spec loop_names(Table :: ets:tab()) -> ok.
 
 loop_names(Table) ->
   receive
@@ -164,7 +164,7 @@ loop_names(Table) ->
 %%%===================================================================
 
 %% @doc Find the name in the table. Return not_found if ID not in table.
--spec fetch_name(From :: {Pid :: pid(), Tag :: term()}, ID :: string(), Table :: tab()) -> not_found | Found :: string().
+-spec fetch_name(From :: {Pid :: pid(), Tag :: term()}, ID :: string(), Table :: ets:tab()) -> not_found | string().
 
 fetch_name(From, ID, Table) ->
   NameId = element(1, string:to_integer(string:sub_string(ID, 3))),
@@ -191,7 +191,7 @@ parse_name(Person) ->
 %%%===================================================================
 
 %% @doc Return a random or hash based server from the list
--spec distribute_to(K :: term(), Servers :: [S :: atom()]) -> S.
+-spec distribute_to(K :: term(), Servers :: [atom()]) -> atom().
 
 distribute_to(Key, Servers) when is_integer(Key) ->
   Index = rand:uniform(length(Servers)),
