@@ -12,7 +12,14 @@
 -include_lib("constants.hrl").
 
 %% API
--export([start_distribution/0, distribute/1, redistribute/2, servers/0]).
+-export([start_distribution/0, distribute/1, redistribute/2]).
+
+%%%===================================================================
+%%% Internal functions - start_distribution/0
+%%%===================================================================
+
+%% @doc Executed during init of master. Find Running servers and distribute the data
+-spec start_distribution() -> {Servers :: [S :: atom()], NamePID :: pid()}.
 
 start_distribution() ->
   Servers = find_servers(?SERVERS, []),
@@ -22,23 +29,40 @@ start_distribution() ->
   distribute(Servers),
   {Servers, NamePID}.
 
+%%%===================================================================
+%%% Internal functions - distribute/1
+%%%===================================================================
+
+%% @doc Distribute to the Running Servers the data
+-spec distribute(Servers :: [S :: atom()]) -> ok.
 
 distribute(Servers) ->
   second_step(Servers),
   third_step(Servers),
   io:format("Data Distributed to ~p (~p servers).~n", [Servers, length(Servers)]).
 
+%%%===================================================================
+%%% Internal functions - redistribute/2
+%%%===================================================================
+
+%% @doc In case a server is DOWN, ask for a running server to merge its data with the DOWN server
+-spec redistribute(Servers :: [S :: atom()], Down :: atom()) -> ok.
 
 redistribute([], _) -> ok;
 redistribute(Servers, Down) ->
-  Chosen = distributeTo(Down, Servers),
+  Chosen = distribute_to(Down, Servers),
   case gen_server:call({server, Chosen}, {merge, Down}) of
     ack -> ok;
-    {error, _} -> redistribute(Servers -- [distributeTo(Down, Servers)], Down)
+    {error, _} -> redistribute(Servers -- [distribute_to(Down, Servers)], Down)
   end.
 
+%%%===================================================================
+%%% Internal functions - first_step/0
+%%%===================================================================
 
-% First Step: Load Names file. Return PID of the running process with the data
+%% @doc Load the names DB and start a process to return the associated names when needed
+-spec first_step() -> pid().
+
 first_step() -> spawn(fun() -> first_step(ets:new(names, [ordered_set, public, {read_concurrency, true}])) end).
 
 first_step(Table) ->
@@ -52,28 +76,46 @@ first_step(Table, File) ->
       file:close(File),
       loop_names(Table);
     Line ->
-      {ID, Name} = parseName(string:split(Line, "\t", all)),
+      {ID, Name} = parse_name(string:split(Line, "\t", all)),
       ets:insert_new(Table, {ID, Name})
   end,
   first_step(Table, File).
+
+%%%===================================================================
+%%% Internal functions - second_step/1
+%%%===================================================================
+
+%% @doc Send to the servers data from the Basic.tsv file
+-spec second_step(Servers :: [S :: atom()]) -> ok.
 
 second_step([]) -> ok;
 second_step(Servers) ->
   {ok, File} = file:open(?BASIC_FILENAME, [read]),
   _headers = io:get_line(File, ""),
-  ok = sendLines(Servers, File, step1),
+  ok = send_lines(Servers, File, step1),
   file:close(File).
+
+%%%===================================================================
+%%% Internal functions - third_step/1
+%%%===================================================================
+
+%% @doc Send to the servers data from the Principals.tsv file
+-spec third_step(Servers :: [S :: atom()]) -> ok.
 
 third_step([]) -> ok;
 third_step(Servers) ->
   {ok, File} = file:open(?PRINCIPALS_FILENAME, [read]),
   _headers = io:get_line(File, ""),
-  ok = sendLines(Servers, File, step2),
+  ok = send_lines(Servers, File, step2),
   file:close(File).
 
-servers() -> lists:map(fun(X) -> list_to_atom(X) end, read_file(?SERVERS_FILENAME)).
+%%%===================================================================
+%%% Internal functions - find_servers/1
+%%%===================================================================
 
-%% find_servers - check each server if alive. Returns a list of server nodes which are alive
+%% @doc Check each server if alive. Returns a list of server nodes which are running
+-spec find_servers(Servers :: [S :: atom()], Nodes :: [N :: atom()]) -> Nodes.
+
 find_servers([], Servers) -> Servers;
 find_servers([Server | Servers], Nodes) ->
   io:format("~nTrying to connect to ~p...~n", [Server]),
@@ -86,29 +128,43 @@ find_servers([Server | Servers], Nodes) ->
       find_servers(Servers, Nodes)
   end.
 
-%% read_file - read file as strings separated by lines
-read_file(FileName) ->
-  try
-    {ok, Binary} = file:read_file(FileName),
-    string:tokens(erlang:binary_to_list(Binary), "\r\n")
-  catch
-    error: _Error -> {os:system_time(), error, "Cannot read the file"}
-  end.
+%%%===================================================================
+%%% Internal functions - send_lines/3
+%%%===================================================================
 
-sendLines(Servers, File, Step) ->
+%% @doc Send line to corresponding server
+-spec send_lines(Servers :: [S :: atom()], File :: device(), Step :: step1 | step2) -> ok.
+
+send_lines(Servers, File, Step) ->
   case io:get_line(File, "") of
     eof -> ok;
     Line ->
       Key = hd(string:split(Line, "\t")),
-      ok = gen_server:cast({server, distributeTo(Key, Servers)}, {Step, Line}),
-      sendLines(Servers, File, Step)
+      ok = gen_server:cast({server, distribute_to(Key, Servers)}, {Step, Line}),
+      send_lines(Servers, File, Step)
   end.
+
+%%%===================================================================
+%%% Internal functions - loop_names/1
+%%%===================================================================
+
+%% @doc Process that returns the name associated to the ID
+-spec loop_names(Table :: tab()) -> ok.
 
 loop_names(Table) ->
   receive
-    {From, ID} -> spawn(fun() -> fetch_name(From, ID, Table) end)
-  end,
-  loop_names(Table).
+    {From, ID} ->
+      spawn(fun() -> fetch_name(From, ID, Table) end),
+      loop_names(Table);
+    stop -> ok
+  end.
+
+%%%===================================================================
+%%% Internal functions - fetch_name/3
+%%%===================================================================
+
+%% @doc Find the name in the table. Return not_found if ID not in table.
+-spec fetch_name(From :: {Pid :: pid(), Tag :: term()}, ID :: string(), Table :: tab()) -> not_found | Found :: string().
 
 fetch_name(From, ID, Table) ->
   NameId = element(1, string:to_integer(string:sub_string(ID, 3))),
@@ -117,16 +173,30 @@ fetch_name(From, ID, Table) ->
     [{_, Found}] -> From ! Found
   end.
 
-parseName(Person) ->
+%%%===================================================================
+%%% Internal functions - parse_name/1
+%%%===================================================================
+
+%% @doc Parse a line from the name file
+-spec parse_name(Person :: [string()]) -> {Id :: integer(), Name :: string()}.
+
+parse_name(Person) ->
   {
     element(1, string:to_integer(string:sub_string(lists:nth(1, Person), 3))),
     lists:nth(2, Person)
   }.
 
-distributeTo(Key, Servers) when is_integer(Key) ->
+%%%===================================================================
+%%% Internal functions - distribute_to/2
+%%%===================================================================
+
+%% @doc Return a random or hash based server from the list
+-spec distribute_to(K :: term(), Servers :: [S :: atom()]) -> S.
+
+distribute_to(Key, Servers) when is_integer(Key) ->
   Index = rand:uniform(length(Servers)),
   lists:nth(Index, Servers);
 
-distributeTo(Key, Servers) ->
+distribute_to(Key, Servers) ->
   Index = erlang:phash2(Key, length(Servers)),
   lists:nth(Index + 1, Servers).
