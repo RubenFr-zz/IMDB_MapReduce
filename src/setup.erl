@@ -17,7 +17,7 @@ start(NumOfWorkers) ->
 
 compile_workers(NumOfWorkers) ->
   {ok, Pwd} = file:get_cwd(),
-  file:set_cwd(lists:concat([Pwd, "/Server"])),
+  file:set_cwd(lists:concat([Pwd, "/server"])),
 
   io:format("~nCompiling server.erl...~n"),
   case compile:file("server.erl", [return_warnings]) of
@@ -38,7 +38,7 @@ compile_workers(NumOfWorkers) ->
 
 compile_master() ->
   {ok, Pwd} = file:get_cwd(),
-  file:set_cwd(lists:concat([Pwd, "/Master"])),
+  file:set_cwd(lists:concat([Pwd, "/master"])),
   lists:foreach(
     fun(X) ->
       io:format("~nCompiling ~s...~n", [X]),
@@ -54,7 +54,7 @@ compile_master() ->
 
 compile_client() ->
   {ok, Pwd} = file:get_cwd(),
-  file:set_cwd(lists:concat([Pwd, "/Client"])),
+  file:set_cwd(lists:concat([Pwd, "/client"])),
   io:format("~nCompiling client.erl...~n"),
   case compile:file("client.erl", [return_warnings]) of
     {ok, client, []} -> io:format("Successfully compiled client!~n~n");
