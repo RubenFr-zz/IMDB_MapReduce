@@ -1,6 +1,6 @@
 %%%-------------------------------------------------------------------
 %%% @author Ruben
-%%% @copyright (C) 2021, <COMPANY>
+%%% @copyright (C) 2021, BGU
 %%% @doc
 %%%
 %%% @end
@@ -12,6 +12,12 @@
 %% API
 -export([generate_graph/1, generate_graph/3]).
 
+%%%===================================================================
+%%% Internal functions - generate_graph/1
+%%%===================================================================
+
+%% @doc Create a graphviz based on the edges in the Graph G. Return the Name of the File created
+-spec generate_graph(G :: digraph()) -> FileName :: string().
 generate_graph(G) ->
   ID = erlang:unique_integer([positive]),  % unique id
 
@@ -20,7 +26,7 @@ generate_graph(G) ->
   lists:map(
     fun(E) ->
       {_, N1, N2, _} = digraph:edge(G, E),
-      graphviz:add_edge(re:replace(N1, "[.' -]", "_",[{return,list},global]), re:replace(N2, "[.' -]", "_",[{return,list},global]))
+      graphviz:add_edge(re:replace(N1, "[.' -]", "_", [{return, list}, global]), re:replace(N2, "[.' -]", "_", [{return, list}, global]))
     end, digraph:edges(G)
   ),
 
@@ -30,11 +36,18 @@ generate_graph(G) ->
   graphviz:delete(),
   FileName.
 
+%%%===================================================================
+%%% Internal functions - generate_graph/3
+%%%===================================================================
+
+%% @doc Create a graphviz based on the edges in the Graph G in graphical order. Return the Name of the File created
+-spec generate_graph(G :: digraph(), Root :: vertex(), Type :: movie | actor) -> FileName :: string().
+
 generate_graph(G, Root, Type) ->
   ID = erlang:unique_integer([positive]),  % unique id
 
   graphviz:digraph(io_lib:format("G_~p", [ID])),  % Create graph
-  graphviz:add_node(re:replace(Root, "[.' -]", "_",[{return,list},global])),
+  graphviz:add_node(re:replace(Root, "[.' -]", "_", [{return, list}, global])),
 
   add_neighbours(G, Root, Type),
   FileName = io_lib:format("Tree_~p.png", [ID]),
@@ -43,19 +56,33 @@ generate_graph(G, Root, Type) ->
   graphviz:delete(),
   FileName.
 
+%%%===================================================================
+%%% Internal functions - add_neighbours/3
+%%%===================================================================
+
+%% @doc Add to the graphviz all the children of Root
+-spec add_neighbours(G :: digraph(), Root :: vertex(), Type :: movie | actor) -> ok.
+
 add_neighbours(G, Root, Type) ->
   case found_children(G, Root, Type) of
     [] -> ok;
     Neighbours ->
-      RootJ = re:replace(Root, "[.' -]", "_",[{return, list}, global]),
-      lists:map(
+      RootJ = re:replace(Root, "[.' -]", "_", [{return, list}, global]),
+      lists:foreach(
         fun(V) ->
-          Vertex = re:replace(V, "[.' -]", "_",[{return, list}, global]),
+          Vertex = re:replace(V, "[.' -]", "_", [{return, list}, global]),
           graphviz:add_node(Vertex),
           graphviz:add_edge(RootJ, Vertex),
           add_neighbours(G, V, Type)
         end, Neighbours)
   end.
+
+%%%===================================================================
+%%% Internal functions - found_children/3
+%%%===================================================================
+
+%% @doc Find all the children of Root in G and sort them in graphical order
+-spec found_children(G :: digraph(), Root :: vertex(), Type :: movie | actor) -> [V :: vertex()].
 
 found_children(G, Root, Type) ->
   OutNeighbours = digraph:out_neighbours(G, Root),
@@ -63,12 +90,19 @@ found_children(G, Root, Type) ->
   case Type of
     movie -> lists:sort(OutNeighbours);
     actor -> lists:sort(
-        fun(X1, X2) -> 
-          S1 = lists:last(string:split(X1, " ", trailing)),
-          S2 = lists:last(string:split(X2, " ", trailing)),
-          S1 < S2
-        end, OutNeighbours);
+      fun(X1, X2) ->
+        S1 = lists:last(string:split(X1, " ", trailing)),
+        S2 = lists:last(string:split(X2, " ", trailing)),
+        S1 < S2
+      end, OutNeighbours);
     _ -> []
   end.
+
+%%%===================================================================
+%%% Internal functions - delete_edges/2
+%%%===================================================================
+
+%% @doc Delete all the out edges of Root in G
+-spec delete_edges(G :: digraph(), Root :: vertex()) -> true.
 
 delete_edges(G, Root) -> digraph:del_edges(G, digraph:out_edges(G, Root)).
