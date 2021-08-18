@@ -1,7 +1,7 @@
 # Final Project - Map Reduce in Erlang over IMDb
 
 > You can find the data base [HERE](https://datasets.imdbws.com)  
-> A shorter version is available [HERE](https://github.com/RubenFr/IMDB_MapReduce/tree/master/src/master/InputFiles) 
+> A shorter version is available [HERE](https://github.com/RubenFr/IMDB_MapReduce/tree/master/src/master/InputFiles)
 
 ## Run
 
@@ -32,11 +32,12 @@ You can find the video [HERE](https://www.youtube.com/watch?v=gCopIflEc6I)
 
 ## Features
 
-- [x] Master & Slaves monitoring each other `erlang::monitor_node(Node, true).`  
-- [x] Parallelization  
-- [x] Digraph & [GraphViz](https://github.com/glejeune/erlang-graphviz)  
+- [x] Master & Slaves monitoring each other `erlang::monitor_node(Node, true).`
+- [x] Parallelization
+- [x] Digraph & [GraphViz](https://github.com/glejeune/erlang-graphviz)
 - [x] Use of [gen_server module](https://erlang.org/doc/man/gen_server.html)
-- [ ]  Distribution of the files using tfp
+- [ ] Distribution of the files using tfp
+- [ ] Rebar3
 
 ## Input
 
