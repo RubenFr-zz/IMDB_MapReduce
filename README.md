@@ -4,7 +4,7 @@
 
 ## Run
 
-After compilation of every file do
+> __Note:__ Every file are already compiled
 
 ### Server (Worker)
 ```bash
@@ -29,7 +29,7 @@ client:start().
 
 ## Input
 
-#### basics.tsv 
+#### basics.tsv
     - tconst (string) - alphanumeric unique identifier of the title  
     - titleType (string) – the type/format of the title (e.g. movie, short, tvseries, tvepisode, video, etc)
     - primaryTitle (string) – the more popular title / the title used by the filmmakers on promotional materials at the point of release  
@@ -41,14 +41,14 @@ client:start().
 
 > __8.163.533 films/tv shows/shorts__
 
-#### principals.tsv  
+#### principals.tsv
     - tconst (string) - alphanumeric unique identifier of the title  
     - ordering (integer) – a number to uniquely identify rows for a given titleId  
     - nconst (string) - alphanumeric unique identifier of the name/person  
     - category (string) - the category of job that person was in  
     - job (string) - the specific job title if applicable, else '\N'  
     - characters (string) - the name of the character played if applicable, else '\N'  
-#### names.tsv  
+#### names.tsv
     - nconst (string) - alphanumeric unique identifier of the name/person  
     - primaryName (string)– name by which the person is most often credited  
     - birthYear – in YYYY format  
@@ -56,8 +56,8 @@ client:start().
     - primaryProfession (array of strings)– the top-3 professions of the person  
     - knownForTitles (array of tconsts) – titles the person is known for  
 
-The objective is to merge the three file to fit our model:  
-> Create one file per movie and crew member. 
+The objective is to merge the three file to fit our model:
+> Create one file per movie and crew member.
 > A movie file will contain the list of all the crew that played in it
 > An crew file will contain the list of all the movies the actor played in
 
