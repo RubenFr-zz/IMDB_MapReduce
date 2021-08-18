@@ -5,7 +5,27 @@
 
 ## Run
 
-> __Note:__ Every file are already compiled
+> __Note:__ All the compilation have been made on Erlang 24.0
+
+### Running Locally
+
+Prior to running anything, one needs to compile all the files. To do so, we added an erlang module (located in `./src`): `setup.erl`.
+
+1. No Arguments (by default only 1 server will be created)
+
+```erlang
+c(setup).
+setup:start().  % Similar to setup:start(0).
+```
+
+2. that takes as argument the number of workers to run and set-up everything (in erlang shell).
+
+```erlang
+c(setup).
+setup:start(?NumOfWorkers).
+```
+
+> __Note:__ At this stage, every file is already compiled
 
 ### Server (Worker)
 ```bash
@@ -36,7 +56,6 @@ You can find the video [HERE](https://www.youtube.com/watch?v=gCopIflEc6I)
 - [x] Parallelization
 - [x] Digraph & [GraphViz](https://github.com/glejeune/erlang-graphviz)
 - [x] Use of [gen_server module](https://erlang.org/doc/man/gen_server.html)
-- [x] ETS
 - [ ] Distribution of the files using tfp
 - [ ] Rebar3
 
