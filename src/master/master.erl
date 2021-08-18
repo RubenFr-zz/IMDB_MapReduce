@@ -237,12 +237,11 @@ process_request(Request = #request{name = Name, type = Type, level = Level}, Fro
   Set = sets:new(),
 
   process_request(G, Root, sets:add_element(Name, Set), Request, 1, Servers), % Process request (recursive)
-  io:format("~nFINISHED PROCESSING REQUEST: ~p vertices and ~p edges~n~n", [length(digraph:edges(G)), length(digraph:vertices(G))]),
 
-  gen_server:reply(From, {length(digraph:edges(G)), length(digraph:vertices(G))}),
+  gen_server:reply(From, {digraph:vertices(G), digraph:edges(G)}),
   FileName = generate_graph(G, Root, Type),
-  Reply = os:cmd(io_lib:format("xdg-open ~s", [FileName])),
-  io:format("Opening file ~s: ~p~n", [FileName, Reply]).
+  io:format("Opening file ~s~n", [FileName]),
+os:cmd(io_lib:format("xdg-open ~s", [FileName])).
 
 process_request(_, _, _, #request{level = Level}, Level, _) -> ok;
 
