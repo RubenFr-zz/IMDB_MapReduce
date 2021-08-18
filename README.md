@@ -22,10 +22,20 @@ erl -name client@ip -setcookie x
 client:start().
 ```
 
->   * `-name` can be `-sname` for local connection run
+>   * `-name` can be replaced with `-sname` for local run
 >   * `ip` is the to be replaced with the ip address over the corresponding file is been run on
 >   * Need to update `InputFiles/servers.txt` with the list of all the servers node available (replace `{i}` with the number of the server)
 
+## Runtime video
+You can find the video [HERE](https://www.youtube.com/watch?v=H0qoDcPcLVk)
+
+## Features
+
+[x] Master & Slaves monitoring each other `erlang::monitor_node(Node, true).`  
+[]  Distribution of the files using tfp
+[x] Parallelization  
+[x] Digraph & [GraphViz](https://github.com/glejeune/erlang-graphviz)  
+[x] Use of [gen_server module](https://erlang.org/doc/man/gen_server.html)
 
 ## Input
 
@@ -55,23 +65,3 @@ client:start().
     - deathYear – in YYYY format if applicable, else '\N'  
     - primaryProfession (array of strings)– the top-3 professions of the person  
     - knownForTitles (array of tconsts) – titles the person is known for  
-
-The objective is to merge the three file to fit our model:
-> Create one file per movie and crew member.
-> A movie file will contain the list of all the crew that played in it
-> An crew file will contain the list of all the movies the actor played in
-
-That way when we want to create the tree of a movie, we'll go over the file of all it's actors and that will be rank 1.
-We'll do the same for every other level.
-
-### Distribution
-
-#### basics.tsv
-This is the first file to proceed. It contains the name and id (`tconst`) of __8.163.533 films/tv shows/shorts__.  
-The four computers will receive a quarter of the file.
-The first step will be to remove unused information such as: originalTitle, isAdult, startYear, endYear, runtimeMinutes
-and to keep: **tconst, titleType, primaryTitle, genres**
-
-## Runtime video
-You can find the video [HERE](https://youtu.be/gCopIflEc6I)
-
