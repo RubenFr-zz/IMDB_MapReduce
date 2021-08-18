@@ -28,7 +28,7 @@ client:start().
 >   * Need to update `InputFiles/servers.txt` with the list of all the servers node available (replace `{i}` with the number of the server)
 
 ## Runtime video
-You can find the video [HERE](https://www.youtube.com/watch?v=H0qoDcPcLVk)
+You can find the video [HERE](https://www.youtube.com/watch?v=gCopIflEc6I)
 
 ## Features
 
