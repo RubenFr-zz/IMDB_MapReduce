@@ -1,6 +1,6 @@
 %%%-------------------------------------------------------------------
 %%% @author Ruben
-%%% @copyright (C) 2021, <COMPANY>
+%%% @copyright (C) 2021, BGU
 %%% @doc
 %%%
 %%% @end
@@ -13,7 +13,6 @@
 -include_lib("wx/include/wx.hrl").
 
 -define(SERVER, ?MODULE).
-% -define(MASTER_NODE, 'master@132.72.104.125').
 -define(MASTER_NODE, 'master@ubuntu').
 
 -record(request, {name, type, level}).
@@ -28,7 +27,7 @@ start() ->
   Headline = wxStaticText:new(Frame, ?wxID_ANY, "Please enter a name of a actor or a movie", [{style, ?wxALIGN_CENTRE_HORIZONTAL}]),
   wxStaticText:wrap(Headline,5000),
 
-  RadioBox = wxRadioBox:new(Frame, ?wxID_ANY, "Type:", {0,0}, {250,75}, ["Movie or Tv-Show or Short", "Actor or Actress"]),
+  RadioBox = wxRadioBox:new(Frame, ?wxID_ANY, "Type:", {0,0}, {250,45}, ["Movie       ", "Actor or Actress"]),
   RadioBox2 = wxRadioBox:new(Frame, ?wxID_ANY, "Level:", {0,0}, {250,45}, [" 1        "," 2        "," 3        "," 4"], [{majorDim, ?wxHORIZONTAL}]),
 
   ButtonSearch = wxButton:new(Frame, ?wxID_ANY, [{label, "Search"}, {size,{200,30}}]),    %new button with text
@@ -105,8 +104,8 @@ How to use?
 
 parse_type(String) ->
   case String of
-    0 -> title;
-    1 -> cast;
+    0 -> movie;
+    1 -> actor;
     Other -> Other
   end.
 
