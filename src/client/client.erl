@@ -75,7 +75,7 @@ start() ->
 %%%===================================================================
 
 %% @doc Handler function for the Search button
--spec search_mouse_click(A :: #wx{}, _) -> ok | {V, E}.
+-spec search_mouse_click(A :: #wx{}, _) -> ok | {term(), term()}.
 
 search_mouse_click(A = #wx{}, _) ->
   {Env, Text, Type, Level} = A#wx.userData,
@@ -123,7 +123,7 @@ How to use?
 %%%===================================================================
 %%% Internal functions - parse_type
 %%%===================================================================
--spec parse_type(Int :: integer()) -> movie | actor | Other :: integer().
+-spec parse_type(Int :: integer()) -> movie | actor | integer().
 
 parse_type(Int) ->
   case Int of
