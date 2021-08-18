@@ -24,7 +24,7 @@
 %%-define(MASTER_NODE, 'master@132.72.104.125').
 -define(MASTER_NODE, 'master@ubuntu').
 
--record(server_state, {titles_db, actors_db}).
+-record(server_state, {titles_db, actors_db, monitor}).
 -record(title, {id, title, type, genres, cast}).
 -record(request, {name, type, level}).
 
@@ -73,7 +73,7 @@ init([]) ->
   {stop, Reason :: term(), NewState :: #server_state{}}).
 
 %% Job request -> Request = #request{}
-handle_call({request, Request = #request{}}, From, State = #server_state{}) ->
+handle_call({request, Request = {_, _}}, From, State = #server_state{}) ->
   spawn(fun() -> process_request(Request, From, State) end),
   {noreply, State};
 
@@ -137,24 +137,28 @@ handle_cast({step2, Line}, State = #server_state{titles_db = MoviesTable, actors
   {noreply, State};
 
 handle_cast(stop_init, State = #server_state{titles_db = TitlesTable, actors_db = ActorsTable}) ->
-  io:format("Init Terminated.~n"),
   ID = hd(string:split(atom_to_list(node()), "@")),
   NewTitlesTable = change_key(TitlesTable),
 
   % Save the movies table in two forms
-  io:format("Saving Movies Table -> ~p elements~n", [ets:info(NewTitlesTable, size)]),
+  io:format("~nSaving Movies Table -> ~p elements~n", [ets:info(NewTitlesTable, size)]),
   tab2file(NewTitlesTable, "table_movies_" ++ ID ++ ".txt"),
   ets:tab2file(NewTitlesTable, "table_movies_" ++ ID),
   send_file_to_master("table_movies_" ++ ID),
 
   % Save the actors table in two forms
-  io:format("Saving Actors Table -> ~p elements~n", [ets:info(ActorsTable, size)]),
+  io:format("~nSaving Actors Table -> ~p elements~n", [ets:info(ActorsTable, size)]),
   tab2file(ActorsTable, "table_actors_" ++ ID ++ ".txt"),
   ets:tab2file(ActorsTable, "table_actors_" ++ ID),
   send_file_to_master("table_actors_" ++ ID),
 
-  monitor_master(),
-  {noreply, State#server_state{titles_db = NewTitlesTable}};
+  case State#server_state.monitor of
+    undefined -> Monitor = spawn_link(fun() -> monitor_master() end);
+    Pid -> Monitor = Pid
+  end,
+
+  io:format("Init Terminated.~n"),
+  {noreply, State#server_state{titles_db = NewTitlesTable, monitor = Monitor}};
 
 handle_cast(_Request, State = #server_state{}) ->
   {noreply, State}.
@@ -253,33 +257,24 @@ fetch_name(NameID) ->
 
 %% @doc Process a request sent from master
 -spec(process_request(Request :: #request{}, From :: {pid(), Tag :: term()}, State :: #server_state{}) -> ok).
-process_request(Request = #request{}, From, #server_state{actors_db = ActorsTable, titles_db = MoviesTable}) ->
+process_request({Name, Type}, From, #server_state{actors_db = ActorsTable, titles_db = MoviesTable}) ->
   ID = erlang:unique_integer([positive]),
-  io:format("Request ~p: Name = ~p\tType = ~p~n", [ID, Request#request.name, Request#request.type]),
+  io:format("Request ~p: Name = ~p\tType = ~p~n", [ID, Name, Type]),
 
   Start = os:timestamp(),
-  case Request#request.type of
-    cast -> Reply = process_request(Request, ActorsTable, MoviesTable);
-    title -> Reply = process_request(Request, MoviesTable, ActorsTable);
+  case Type of
+    actor -> Reply = process_request(Name, ActorsTable);
+    movie -> Reply = process_request(Name, MoviesTable);
     _other -> Reply = bad_arg
   end,
   io:format("Result for Request ~p: ~p~n", [ID, Reply]),
-  io:format("Processing the request (~p) took ~p ms.~n", [ID, round(timer:now_diff(os:timestamp(), Start) / 1000)]),
-  gen_server:reply(From, Reply);
+  io:format("Processing the request (~p) took ~p us.~n", [ID, round(timer:now_diff(os:timestamp(), Start))]),
+  gen_server:reply(From, Reply).
 
-
-process_request(Request = #request{}, First, Second) ->
-  Name = Request#request.name,
-  case ets:lookup(First, Name) of
+process_request(Name, TableRef) ->
+  case ets:lookup(TableRef, Name) of
     [] -> [];
-    [{Name, L1}] ->
-      lists:foldr(
-        fun(E, Acc) ->
-          case ets:lookup(Second, E) of
-            [] -> [];
-            [{E, L2}] -> L2 ++ Acc
-          end
-        end, [], L1)
+    [{Name, L1}] -> L1
   end.
 
 %%%===================================================================
@@ -295,20 +290,28 @@ merge_db(State = #server_state{}, DeadNode) ->
   case ets:file2tab("table_movies_" ++ ID) of
     {error, Reason} -> {error, Reason};
     {ok, ETS1} ->
-      file:delete("table_movies_" ++ ID),
       merge_db(State#server_state.titles_db, ETS1),
+      file:delete("table_movies_" ++ ID),
       case ets:file2tab("table_actors_" ++ ID) of
         {error, Reason} -> {error, Reason};
         {ok, ETS2} ->
+          merge_db(State#server_state.actors_db, ETS2),
           file:delete("table_actors_" ++ ID),
-          merge_db(State#server_state.actors_db, ETS2)
+          ack
       end
   end;
 
 merge_db(TableRef, ToMerge) ->
-  lists:foreach(fun(X) -> ets:insert_new(TableRef, X) end, ets:tab2list(ToMerge)),
+  io:format("~nBefore Merging: ~p elements~n", [ets:info(TableRef, size)]),
+  lists:foreach(
+    fun({K, V}) ->
+      case ets:lookup(TableRef, K) of
+        [] -> ets:insert_new(TableRef, {K, V});
+        [{K, List}] -> ets:insert(TableRef, {K, V ++ List})
+      end
+    end, ets:tab2list(ToMerge)),
   ets:delete(ToMerge),
-  ack.
+  io:format("After Merging: ~p elements~n~n", [ets:info(TableRef, size)]).
 
 %%%===================================================================
 %%% Internal functions - send_file_to_master
@@ -323,7 +326,7 @@ send_file_to_master(FileName) ->
   rpc:call(?MASTER_NODE, file, write_file, [FileName, Bin]),
 
   Reply = gen_server:call({master, ?MASTER_NODE}, {distribute_files, node(), FileName}),
-  io:format("~n~p sent to master in ~p ms~nReply from master: ~p~n",
+  io:format("~p sent to master in ~p ms~nReply from master: ~p~n",
     [FileName, round(timer:now_diff(os:timestamp(), Start) / 1000), Reply]).
 
 %%%===================================================================
@@ -388,8 +391,9 @@ change_key(TableRef) ->
 -spec monitor_master() -> ok.
 monitor_master() ->
   monitor_node(?MASTER_NODE, true),
+  io:format("~nStarted Monitoring Master Node ~p~n", [?MASTER_NODE]),
   receive
-    {nodedown, ?MASTER_NODE} -> 
+    {nodedown, ?MASTER_NODE} ->
       io:format("Master Server Disconnected... Stopping Server ~p~n", [node()]),
       gen_server:stop({server, node()})
   end.
