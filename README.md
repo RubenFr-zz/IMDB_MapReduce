@@ -31,11 +31,11 @@ You can find the video [HERE](https://www.youtube.com/watch?v=H0qoDcPcLVk)
 
 ## Features
 
-[x] Master & Slaves monitoring each other `erlang::monitor_node(Node, true).`  
-[]  Distribution of the files using tfp
-[x] Parallelization  
-[x] Digraph & [GraphViz](https://github.com/glejeune/erlang-graphviz)  
-[x] Use of [gen_server module](https://erlang.org/doc/man/gen_server.html)
+- [x] Master & Slaves monitoring each other `erlang::monitor_node(Node, true).`  
+- [x] Parallelization  
+- [x] Digraph & [GraphViz](https://github.com/glejeune/erlang-graphviz)  
+- [x] Use of [gen_server module](https://erlang.org/doc/man/gen_server.html)
+- [ ]  Distribution of the files using tfp
 
 ## Input
 
