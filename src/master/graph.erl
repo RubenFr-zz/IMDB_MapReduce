@@ -17,7 +17,8 @@
 %%%===================================================================
 
 %% @doc Create a graphviz based on the edges in the Graph G. Return the Name of the File created
--spec generate_graph(G :: digraph()) -> FileName :: string().
+-spec generate_graph(G :: digraph:graph()) -> FileName :: string().
+
 generate_graph(G) ->
   ID = erlang:unique_integer([positive]),  % unique id
 
@@ -41,7 +42,7 @@ generate_graph(G) ->
 %%%===================================================================
 
 %% @doc Create a graphviz based on the edges in the Graph G in graphical order. Return the Name of the File created
--spec generate_graph(G :: digraph(), Root :: vertex(), Type :: movie | actor) -> FileName :: string().
+-spec generate_graph(G :: digraph:graph(), Root :: digraph:vertex(), Type :: movie | actor) -> FileName :: string().
 
 generate_graph(G, Root, Type) ->
   ID = erlang:unique_integer([positive]),  % unique id
@@ -61,7 +62,7 @@ generate_graph(G, Root, Type) ->
 %%%===================================================================
 
 %% @doc Add to the graphviz all the children of Root
--spec add_neighbours(G :: digraph(), Root :: vertex(), Type :: movie | actor) -> ok.
+-spec add_neighbours(G :: digraph:graph(), Root :: digraph:vertex(), Type :: movie | actor) -> ok.
 
 add_neighbours(G, Root, Type) ->
   case found_children(G, Root, Type) of
@@ -82,7 +83,7 @@ add_neighbours(G, Root, Type) ->
 %%%===================================================================
 
 %% @doc Find all the children of Root in G and sort them in graphical order
--spec found_children(G :: digraph(), Root :: vertex(), Type :: movie | actor) -> [V :: vertex()].
+-spec found_children(G :: digraph:graph(), Root :: digraph:vertex(), Type :: movie | actor) -> [V :: digraph:vertex()].
 
 found_children(G, Root, Type) ->
   OutNeighbours = digraph:out_neighbours(G, Root),
@@ -103,6 +104,6 @@ found_children(G, Root, Type) ->
 %%%===================================================================
 
 %% @doc Delete all the out edges of Root in G
--spec delete_edges(G :: digraph(), Root :: vertex()) -> true.
+-spec delete_edges(G :: digraph:graph(), Root :: digraph:vertex()) -> true.
 
 delete_edges(G, Root) -> digraph:del_edges(G, digraph:out_edges(G, Root)).
