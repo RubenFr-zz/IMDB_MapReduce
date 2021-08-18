@@ -4,7 +4,7 @@
 %%% @doc
 %%%
 %%% @end
-%%% Created : 5. Aug 2021 11:59 PM
+%%% Created : 15. Aug 2021 11:59 PM
 %%%-------------------------------------------------------------------
 -module(client).
 -author("Ruben").
@@ -16,6 +16,13 @@
 -define(MASTER_NODE, 'master@ubuntu').
 
 -record(request, {name, type, level}).
+
+%%%===================================================================
+%%% API - start
+%%%===================================================================
+
+%% @doc Start the GUI
+-spec start() -> boolean().
 
 start() ->
 
@@ -39,7 +46,6 @@ start() ->
   StaticBitmap = wxStaticBitmap:new(Frame, ?wxID_ANY, Bitmap),
 
   TextCtrl = wxTextCtrl:new(Frame, ?wxID_ANY, [{value, ""}, {style, ?wxTE_LEFT}]),   %text box value and align
-  % wxTextCtrl:setToolTip(TextCtrl, "Enter your search value here"),
   Font = wxFont:new(14, ?wxFONTFAMILY_DEFAULT, ?wxFONTSTYLE_NORMAL, ?wxFONTWEIGHT_NORMAL),    %font size and design
   wxTextCtrl:setFont(TextCtrl, Font),
 
@@ -64,9 +70,14 @@ start() ->
 
   wxFrame:show(Frame).
 
-%--------------------------------------------------------------------------------
-%--------------------------------------------------------------------------------
-search_mouse_click(A = #wx{}, _B) ->
+%%%===================================================================
+%%% Callback - Search button
+%%%===================================================================
+
+%% @doc Handler function for the Search button
+-spec search_mouse_click(A :: #wx{}, _) -> ok | {V, E}.
+
+search_mouse_click(A = #wx{}, _) ->
   {Env, Text, Type, Level} = A#wx.userData,
   wx:set_env(Env),
   case is_valid(wxTextCtrl:getValue(Text)) of
@@ -82,7 +93,14 @@ search_mouse_click(A = #wx{}, _B) ->
       gen_server:call({master, ?MASTER_NODE}, {request, Request})
   end.
 
-info_mouse_click(_A = #wx{}, _B) ->
+%%%===================================================================
+%%% Callback - Information button
+%%%===================================================================
+
+%% @doc Handler function for the Information button
+-spec info_mouse_click(_, _) -> boolean().
+
+info_mouse_click(_, _) ->
   WX = wx:new(),
   Frame = wxFrame:new(WX, ?wxID_ANY, "IMBD",[{pos,{700,300}}, {size,{400,400}}]),
   wxWindow:setBackgroundColour(Frame, {244,196,5}),
@@ -102,12 +120,22 @@ How to use?
 
   wxFrame:show(Frame).
 
-parse_type(String) ->
-  case String of
+%%%===================================================================
+%%% Internal functions - parse_type
+%%%===================================================================
+-spec parse_type(Int :: integer()) -> movie | actor | Other :: integer().
+
+parse_type(Int) ->
+  case Int of
     0 -> movie;
     1 -> actor;
     Other -> Other
   end.
 
-is_valid(String) -> length(String) > 0.
+%%%===================================================================
+%%% Internal functions - parse_type
+%%%===================================================================
+-spec is_valid(String :: string()) -> boolean().
+is_valid(String) ->
+  length(String) > 0.
 
