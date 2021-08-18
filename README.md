@@ -36,6 +36,7 @@ You can find the video [HERE](https://www.youtube.com/watch?v=gCopIflEc6I)
 - [x] Parallelization
 - [x] Digraph & [GraphViz](https://github.com/glejeune/erlang-graphviz)
 - [x] Use of [gen_server module](https://erlang.org/doc/man/gen_server.html)
+- [x] ETS
 - [ ] Distribution of the files using tfp
 - [ ] Rebar3
 
