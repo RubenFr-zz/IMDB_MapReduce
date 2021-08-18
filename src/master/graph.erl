@@ -47,13 +47,12 @@ add_neighbours(G, Root, Type) ->
   case found_children(G, Root, Type) of
     [] -> ok;
     Neighbours ->
-      RootJ = re:replace(Root, "[.' -]", "_",[{return,list},global]),
+      RootJ = re:replace(Root, "[.' -]", "_",[{return, list}, global]),
       lists:map(
         fun(V) ->
-          Vertex = re:replace(V, "[.' -]", "_",[{return,list},global]),
+          Vertex = re:replace(V, "[.' -]", "_",[{return, list}, global]),
           graphviz:add_node(Vertex),
           graphviz:add_edge(RootJ, Vertex),
-          % graphviz:add_edge(Root, V),
           add_neighbours(G, V, Type)
         end, Neighbours)
   end.
@@ -62,8 +61,8 @@ found_children(G, Root, Type) ->
   OutNeighbours = digraph:out_neighbours(G, Root),
   delete_edges(G, Root),
   case Type of
-    title -> lists:sort(OutNeighbours);
-    cast -> lists:sort(
+    movie -> lists:sort(OutNeighbours);
+    actor -> lists:sort(
         fun(X1, X2) -> 
           S1 = lists:last(string:split(X1, " ", trailing)),
           S2 = lists:last(string:split(X2, " ", trailing)),

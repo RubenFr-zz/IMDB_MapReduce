@@ -10,6 +10,7 @@
 -author("Ruben").
 
 -behaviour(gen_server).
+-include_lib("constants.hrl").
 
 %% API
 -export([start_link/0]).
@@ -19,9 +20,6 @@
   code_change/3]).
 
 -import(graph, [generate_graph/1, generate_graph/3]).
-
--define(SERVER, master).
--define(SERVERS_FILENAME, "InputFiles/servers.txt").
 
 -record(master_state, {servers, namePID, monitor}).
 -record(request, {name, type, level}).
@@ -34,7 +32,7 @@
 -spec(start_link() ->
   {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link() ->
-  {ok, PID} = gen_server:start_link({global, ?SERVER}, ?MODULE, [], []),
+  {ok, PID} = gen_server:start_link({global, ?MODULE}, ?MODULE, [], []),
   register(master, PID),
   gen_server:cast({master, node()}, init),
   {ok, PID}.
@@ -71,10 +69,11 @@ init([]) ->
 
 %% A node is up, monitor it and redistribute the data
 handle_call({register, Node}, _From, State = #master_state{servers = Servers, monitor = Pid}) ->
+  io:format("New Server ~p is UP!~n", [Node]),
   broadcast(Servers, pcall, reset),
   dataInit:distribute([Node | Servers]),
   broadcast([Node | Servers], cast, stop_init), % Tell the servers the init is over
-  Pid ! {register, Node},
+  Pid ! {monitor, Node},
   {reply, ok, State#master_state{servers = [Node | Servers]}};
 
 %% Return as a reply the name associated to the NameId
@@ -230,24 +229,39 @@ broadcast(Servers, Type, Message) ->
 %% @doc Process a request from a client. Build and display a graphviz
 -spec process_request(Request :: #request{}, From :: {Pid :: pid(), Tag :: term()}, Servers :: [atom()]) -> ok.
 
-process_request(Request = #request{}, From, Servers) ->
-  io:format("Received a new Request: Name = ~p\tType = ~p\tLevel = ~p~n", [Request#request.name, Request#request.type, Request#request.level]),
-  G = digraph:new(),
-  Root = digraph:add_vertex(G, Request#request.name, Request#request.name),
+process_request(Request = #request{name = Name, type = Type, level = Level}, From, Servers) ->
+  io:format("Received a new Request: Name = ~p\tType = ~p\tLevel = ~p~n", [Name, Type, Level]),
+
+  G = digraph:new(),  % Create Digraph
+  Root = digraph:add_vertex(G, Name), % Add Root to digraph
   Set = sets:new(),
-  process_request(G, Root, sets:add_element(Request#request.name, Set), Request, 1, Servers),
+
+  process_request(G, Root, sets:add_element(Name, Set), Request, 1, Servers), % Process request (recursive)
+  io:format("~nFINISHED PROCESSING REQUEST: ~p vertices and ~p edges~n~n", [length(digraph:edges(G)), length(digraph:vertices(G))]),
+
   gen_server:reply(From, {length(digraph:edges(G)), length(digraph:vertices(G))}),
-  FileName = generate_graph(G, Root, Request#request.type),
+  FileName = generate_graph(G, Root, Type),
   Reply = os:cmd(io_lib:format("xdg-open ~s", [FileName])),
   io:format("Opening file ~s: ~p~n", [FileName, Reply]).
 
-process_request(_, _, _, Request = #request{}, Level, _) when Level =:= Request#request.level -> ok;
+process_request(_, _, _, #request{level = Level}, Level, _) -> ok;
 
-process_request(G, V, Set, Request = #request{}, Level, Servers) ->
-  Children = parse_reply(broadcast(Servers, pcall, {request, Request#request{name = V, level = Level}})),
-  {AddedVertices, UpdatedSet} = update_graph(G, V, Set, Children, []),
+process_request(Graph, Root, Set, Request = #request{type = Type}, Level, Servers) ->
+
+  First = parse_reply(broadcast(Servers, pcall, {request, {Root, Type}})),
+  Children =
+    lists:append(
+      pmap:map(
+        fun(E) ->
+          parse_reply(broadcast(Servers, pcall, {request, {E, get_opposite(Type)}}))
+        end, First
+      )
+    ),
+
+  {AddedVertices, UpdatedSet} = update_graph(Graph, Root, Set, Children, []),
   io:format("Level ~p: ~s~n", [Level, string:join(AddedVertices, ", ")]),
-  lists:foreach(fun(Vertex) -> process_request(G, Vertex, UpdatedSet, Request, Level + 1, Servers) end, AddedVertices).
+  lists:foreach(fun(Vertex) ->
+    process_request(Graph, Vertex, UpdatedSet, Request, Level + 1, Servers) end, AddedVertices).
 
 %%%===================================================================
 %%% Internal functions - update_graph
@@ -255,13 +269,14 @@ process_request(G, V, Set, Request = #request{}, Level, Servers) ->
 
 %% @doc Add new vertices and edges to graph G
 update_graph(_, _, Set, [], V) -> {V, Set};
-update_graph(G, V, Set, [Name | Next], Vertices) ->
+update_graph(G, Root, Set, [Name | Next], Vertices) ->
   case sets:is_element(Name, Set) of
-    true -> update_graph(G, V, Set, Next, Vertices);
+    true -> update_graph(G, Root, Set, Next, Vertices);
     false ->
-      V1 = digraph:add_vertex(G, Name, Name),
-      digraph:add_edge(G, V, V1),
-      update_graph(G, V, sets:add_element(Name, Set), Next, [V1 | Vertices])
+      V = digraph:add_vertex(G, Name, Name),
+      digraph:add_edge(G, Root, V),
+      io:format("~p Added to Digraph~n", [{Root, Name}]),
+      update_graph(G, Root, sets:add_element(Name, Set), Next, [V | Vertices])
   end.
 
 %%%===================================================================
@@ -323,7 +338,11 @@ delete_all_backups() ->
   Nodes :: [Node],
   Node :: term().
 monitor_servers(Nodes) ->
-  lists:map(fun(N) -> monitor_node(N, true) end, Nodes),
+  lists:map(
+    fun(N) ->
+      monitor_node(N, true),
+      io:format("Started monitoring ~p~n", [N])
+    end, Nodes),
   monitor_servers().
 
 -spec monitor_servers() -> ok.
@@ -332,9 +351,20 @@ monitor_servers() ->
     {monitor, Node} ->
       io:format("MONITOR: Received New Node to monitor~p~n", [Node]),
       monitor_node(Node, true);
-    {nodedown, Node} = Message ->
-      io:format("MONITOR: Received New Message~n~p~n", [Message]),
+    {nodedown, Node} ->
       gen_server:cast({master, node()}, {server_down, Node}),
       monitor_servers();
     stop -> ok
+  end.
+
+%%%===================================================================
+%%% Internal functions - get_opposite
+%%%===================================================================
+
+%% @doc Return opposite type of 'Type'
+-spec get_opposite(Type :: movie | actor) -> movie | actor.
+get_opposite(Type) ->
+  case Type of
+    movie -> actor;
+    actor -> movie
   end.

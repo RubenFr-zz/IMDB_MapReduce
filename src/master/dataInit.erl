@@ -9,18 +9,13 @@
 -module(dataInit).
 -author("Ruben").
 
+-include_lib("constants.hrl").
+
 %% API
 -export([start_distribution/0, distribute/1, redistribute/2, servers/0]).
 
-%% CONSTANTS
--define(BASIC_FILENAME, "InputFiles/basic.tsv").
--define(PRINCIPALS_FILENAME, "InputFiles/principals.tsv").
--define(NAMES_FILENAME, "InputFiles/names.tsv").
--define(SERVERS_FILENAME, "InputFiles/servers.txt").
-
-
 start_distribution() ->
-  Servers = find_servers(read_file(?SERVERS_FILENAME), []),
+  Servers = find_servers(?SERVERS, []),
   io:format("Found ~p server(s): ~p~n", [length(Servers), Servers]),
 
   NamePID = first_step(),
@@ -31,11 +26,11 @@ start_distribution() ->
 distribute(Servers) ->
   second_step(Servers),
   third_step(Servers),
-  io:format("Data Distributed to ~p (~p severs).~n", [Servers, length(Servers)]).
+  io:format("Data Distributed to ~p (~p servers).~n", [Servers, length(Servers)]).
 
 
 redistribute([], _) -> ok;
-redistribute(Servers, Down) -> 
+redistribute(Servers, Down) ->
   Chosen = distributeTo(Down, Servers),
   case gen_server:call({server, Chosen}, {merge, Down}) of
     ack -> ok;
@@ -81,10 +76,14 @@ servers() -> lists:map(fun(X) -> list_to_atom(X) end, read_file(?SERVERS_FILENAM
 %% find_servers - check each server if alive. Returns a list of server nodes which are alive
 find_servers([], Servers) -> Servers;
 find_servers([Server | Servers], Nodes) ->
-  Node = list_to_atom(Server),
-  case net_kernel:connect_node(Node) of
-    true -> find_servers(Servers, [Node | Nodes]);
-    false -> find_servers(Servers, Nodes)
+  io:format("~nTrying to connect to ~p...~n", [Server]),
+  case net_kernel:connect_node(Server) of
+    true ->
+      io:format("Connected to ~p.~n~n", [Server]),
+      find_servers(Servers, [Server | Nodes]);
+    false ->
+      io:format("Failed to connect to ~p.~n~n", [Server]),
+      find_servers(Servers, Nodes)
   end.
 
 %% read_file - read file as strings separated by lines
