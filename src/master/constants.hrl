@@ -12,7 +12,6 @@
 -define(BASIC_FILENAME, "InputFiles/basic1000.tsv").
 -define(PRINCIPALS_FILENAME, "InputFiles/principals1000.tsv").
 -define(NAMES_FILENAME, "InputFiles/names1000.tsv").
--define(SERVERS_FILENAME, "InputFiles/servers.txt").
 
 %% Servers
 -define(SERVERS,
