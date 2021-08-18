@@ -1,6 +1,6 @@
 # Final Project - Map Reduce in Erlang over IMDb
 
-> You can find the data base [HERE](https://datasets.imdbws.com)
+> You can find the data base [HERE](https://datasets.imdbws.com)  
 > A shorter version is available [HERE](https://github.com/RubenFr/IMDB_MapReduce/tree/master/src/master/InputFiles) 
 
 ## Run
