@@ -73,5 +73,5 @@ The first step will be to remove unused information such as: originalTitle, isAd
 and to keep: **tconst, titleType, primaryTitle, genres**
 
 ## Runtime video
-You can find the video [HERE](https://www.youtube.com/watch?v=H0qoDcPcLVk)
+You can find the video [HERE](https://youtu.be/gCopIflEc6I)
 
