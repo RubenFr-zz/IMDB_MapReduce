@@ -12,7 +12,7 @@
 -include_lib("constants.hrl").
 
 %% API
--export([start_distribution/0, distribute/1, redistribute/2]).
+-export([start_distribution/0, start_distribution/1, distribute/1, redistribute/2]).
 
 %%%===================================================================
 %%% Internal functions - start_distribution/0
@@ -27,6 +27,19 @@ start_distribution() ->
 
   NamePID = first_step(),
   distribute(Servers),
+  {Servers, NamePID}.
+
+start_distribution(FileName) ->
+  Servers = find_servers(?SERVERS, []),
+  io:format("Found ~p server(s): ~p~n", [length(Servers), Servers]),
+
+  NamePID = first_step(),
+
+  {ok, File} = file:open(lists:concat(["InputFiles/", FileName]), [read]),
+  _headers = io:get_line(File, ""),
+  ok = send_lines(Servers, File, step0),
+  file:close(File),
+
   {Servers, NamePID}.
 
 %%%===================================================================
