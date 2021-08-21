@@ -27,7 +27,7 @@ generate_graph(G) ->
   lists:map(
     fun(E) ->
       {_, N1, N2, _} = digraph:edge(G, E),
-      graphviz:add_edge(re:replace(N1, "[.' -]", "_", [{return, list}, global]), re:replace(N2, "[.' -]", "_", [{return, list}, global]))
+      graphviz:add_edge(re:replace(N1, "[^A-Za-z1-9]", "_", [global, {return, list}, global]), re:replace(N2, "[^A-Za-z1-9]", "_", [global, {return, list}, global]))
     end, digraph:edges(G)
   ),
 
@@ -48,7 +48,7 @@ generate_graph(G, Root, Type) ->
   ID = erlang:unique_integer([positive]),  % unique id
 
   graphviz:digraph(io_lib:format("G_~p", [ID])),  % Create graph
-  graphviz:add_node(re:replace(Root, "[.' -]", "_", [{return, list}, global])),
+  graphviz:add_node(re:replace(Root, "[^A-Za-z1-9]", "_", [global, {return, list}, global])),
 
   add_neighbours(G, Root, Type),
   FileName = io_lib:format("Tree_~p.png", [ID]),
@@ -68,10 +68,10 @@ add_neighbours(G, Root, Type) ->
   case found_children(G, Root, Type) of
     [] -> ok;
     Neighbours ->
-      RootJ = re:replace(Root, "[.' -]", "_", [{return, list}, global]),
+      RootJ = re:replace(Root, "[^A-Za-z1-9]", "_", [global, {return, list}, global]),
       lists:foreach(
         fun(V) ->
-          Vertex = re:replace(V, "[.' -]", "_", [{return, list}, global]),
+          Vertex = re:replace(V, "[^A-Za-z1-9]", "_", [global, {return, list}, global]),
           graphviz:add_node(Vertex),
           graphviz:add_edge(RootJ, Vertex),
           add_neighbours(G, V, Type)
