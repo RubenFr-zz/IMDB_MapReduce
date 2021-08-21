@@ -13,7 +13,7 @@
 -include_lib("constants.hrl").
 
 %% API
--export([start_link/0]).
+-export([start_link/0, start_link/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
@@ -35,6 +35,15 @@ start_link() ->
   {ok, PID} = gen_server:start_link({global, ?MODULE}, ?MODULE, [], []),
   register(master, PID),
   gen_server:cast({master, node()}, init),
+  {ok, PID}.
+
+%% @doc Spawns the server and registers the local name (unique)
+-spec(start_link(FileName :: string()) ->
+  {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
+start_link(FileName) ->
+  {ok, PID} = gen_server:start_link({global, ?MODULE}, ?MODULE, [], []),
+  register(master, PID),
+  gen_server:cast({master, node()}, {init, FileName}),
   {ok, PID}.
 
 %%%===================================================================
@@ -122,6 +131,16 @@ handle_cast(init, State = #master_state{}) ->
 
   {NodesAlive, NamePID} = dataInit:start_distribution(),  % Distribute the data to the servers
   broadcast(NodesAlive, cast, stop_init), % Tell the servers the init is over
+  Monitor = spawn_link(fun() -> monitor_servers(NodesAlive) end),
+
+  io:format("Distributed data to ~p servers in ~p ms.~n", [length(NodesAlive), round(timer:now_diff(os:timestamp(), Start) / 1000)]),
+  {noreply, State#master_state{servers = NodesAlive, namePID = NamePID, monitor = Monitor}};%% Init the system
+
+handle_cast({init, DataFileName}, State = #master_state{}) ->
+  Start = os:timestamp(),
+
+  {NodesAlive, NamePID} = dataInit:start_distribution(DataFileName),  % Distribute the data to the servers
+  broadcast(NodesAlive, cast, stop_init2), % Tell the servers the init is over
   Monitor = spawn_link(fun() -> monitor_servers(NodesAlive) end),
 
   io:format("Distributed data to ~p servers in ~p ms.~n", [length(NodesAlive), round(timer:now_diff(os:timestamp(), Start) / 1000)]),
@@ -230,6 +249,7 @@ broadcast(Servers, Type, Message) ->
 -spec process_request(Request :: #request{}, From :: {Pid :: pid(), Tag :: term()}, Servers :: [atom()]) -> ok.
 
 process_request(Request = #request{name = Name, type = Type, level = Level}, From, Servers) ->
+  Start = os:timestamp(),
   io:format("Received a new Request: Name = ~p\tType = ~p\tLevel = ~p~n", [Name, Type, Level]),
 
   G = digraph:new(),  % Create Digraph
@@ -238,10 +258,15 @@ process_request(Request = #request{name = Name, type = Type, level = Level}, Fro
 
   process_request(G, Root, sets:add_element(Name, Set), Request, 1, Servers), % Process request (recursive)
 
-  gen_server:reply(From, {digraph:vertices(G), digraph:edges(G)}),
+  Vertices = digraph:vertices(G),
+  Edges = digraph:edges(G),
+  gen_server:reply(From, {Vertices, Edges}),
+  
+  io:format("Processed Request (~p vertices and ~p edges) in ~p ms.~n", [length(Vertices), length(Edges), round(timer:now_diff(os:timestamp(), Start) / 1000)]),
+  
   FileName = generate_graph(G, Root, Type),
   io:format("Opening file ~s~n", [FileName]),
-os:cmd(io_lib:format("xdg-open ~s", [FileName])).
+  os:cmd(io_lib:format("xdg-open ~s", [FileName])).
 
 process_request(_, _, _, #request{level = Level}, Level, _) -> ok;
 
