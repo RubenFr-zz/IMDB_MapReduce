@@ -108,6 +108,21 @@ handle_call(_Request, _From, State = #server_state{}) ->
   {noreply, NewState :: #server_state{}, timeout() | hibernate} |
   {stop, Reason :: term(), NewState :: #server_state{}}).
 
+handle_cast({step0, Line}, State = #server_state{titles_db = MoviesTable, actors_db = ActorsTable}) ->
+  [Title, List] = string:split(Line, "\t", all),
+  Actors = string:split(List, ",", all),
+
+  ets:insert_new(MoviesTable, {Title, Actors}),
+  lists:foreach(
+    fun(Name) ->
+      case ets:lookup(ActorsTable, Name) of
+        [] -> ets:insert_new(ActorsTable, {Name, [Title]});
+        [{Name, Movies}] -> ets:insert(ActorsTable, {Name, [Title | Movies]})
+      end
+    end, Actors),
+
+  {noreply, State};
+
 handle_cast({step1, Line}, State = #server_state{}) ->
   Data = string:split(Line, "\t", all),
   Title = parse_title(Data),
@@ -140,13 +155,13 @@ handle_cast(stop_init, State = #server_state{titles_db = TitlesTable, actors_db 
   ID = hd(string:split(atom_to_list(node()), "@")),
   NewTitlesTable = change_key(TitlesTable),
 
-  % Save the movies table in two forms
+% Save the movies table in two forms
   io:format("~nSaving Movies Table -> ~p elements~n", [ets:info(NewTitlesTable, size)]),
   tab2file(NewTitlesTable, "table_movies_" ++ ID ++ ".txt"),
   ets:tab2file(NewTitlesTable, "table_movies_" ++ ID),
   send_file_to_master("table_movies_" ++ ID),
 
-  % Save the actors table in two forms
+% Save the actors table in two forms
   io:format("~nSaving Actors Table -> ~p elements~n", [ets:info(ActorsTable, size)]),
   tab2file(ActorsTable, "table_actors_" ++ ID ++ ".txt"),
   ets:tab2file(ActorsTable, "table_actors_" ++ ID),
@@ -159,6 +174,30 @@ handle_cast(stop_init, State = #server_state{titles_db = TitlesTable, actors_db 
 
   io:format("Init Terminated.~n"),
   {noreply, State#server_state{titles_db = NewTitlesTable, monitor = Monitor}};
+
+handle_cast(stop_init2, State = #server_state{titles_db = TitlesTable, actors_db = ActorsTable}) ->
+  ID = hd(string:split(atom_to_list(node()), "@")),
+
+% Save the movies table in two forms
+  io:format("~nSaving Movies Table -> ~p elements~n", [ets:info(TitlesTable, size)]),
+  tab2file(TitlesTable, "table_movies_" ++ ID ++ ".txt"),
+  ets:tab2file(TitlesTable, "table_movies_" ++ ID),
+  send_file_to_master("table_movies_" ++ ID),
+
+% Save the actors table in two forms
+  io:format("~nSaving Actors Table -> ~p elements~n", [ets:info(ActorsTable, size)]),
+  tab2file(ActorsTable, "table_actors_" ++ ID ++ ".txt"),
+  ets:tab2file(ActorsTable, "table_actors_" ++ ID),
+  send_file_to_master("table_actors_" ++ ID),
+
+  case State#server_state.monitor of
+    undefined -> Monitor = spawn_link(fun() -> monitor_master() end);
+    Pid -> Monitor = Pid
+  end,
+
+  io:format("Init Terminated.~n"),
+  {noreply, State#server_state{monitor = Monitor}};
+
 
 handle_cast(_Request, State = #server_state{}) ->
   {noreply, State}.
